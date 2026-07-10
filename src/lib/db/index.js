@@ -44,6 +44,10 @@ export {
   createVisionBridgeProfile, updateVisionBridgeProfile, deleteVisionBridgeProfile,
 } from "./repos/visionBridgeProfilesRepo.js";
 
+export {
+  getAttachmentDescription, putAttachmentDescription, pruneAttachmentDescriptions,
+} from "./repos/attachmentDescriptionsRepo.js";
+
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,

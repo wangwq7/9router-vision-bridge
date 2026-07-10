@@ -40,6 +40,7 @@ function collectFromBlocks(items, getBlocks, format, classify) {
         modality: media.modality,
         cacheKey: attachmentKey(media.source),
         source: media.source || null,
+        block: structuredClone(block),
       });
     });
   });

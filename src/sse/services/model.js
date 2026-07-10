@@ -1,5 +1,5 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
+import { getModelAliases, getComboByName, getProviderNodes, getVisionBridgeProfileByName } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
@@ -91,4 +91,14 @@ export async function getComboModels(modelStr) {
     return combo.models;
   }
   return null;
+}
+
+/**
+ * Resolve a Vision Bridge profile by its external model name.  Profiles share
+ * the no-slash model namespace with combos, but are handled by chat only.
+ */
+export async function getVisionBridgeProfile(modelStr) {
+  if (!modelStr || modelStr.includes("/")) return null;
+  const profile = await getVisionBridgeProfileByName(modelStr);
+  return profile?.enabled ? profile : null;
 }

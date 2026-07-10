@@ -15,6 +15,7 @@ export {
   createCombo, updateCombo, deleteCombo,
   getVisionBridgeProfiles, getVisionBridgeProfileById, getVisionBridgeProfileByName,
   createVisionBridgeProfile, updateVisionBridgeProfile, deleteVisionBridgeProfile,
+  getAttachmentDescription, putAttachmentDescription, pruneAttachmentDescriptions,
   getModelAliases, setModelAlias, deleteModelAlias,
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,

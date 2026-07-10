@@ -9,13 +9,14 @@ import {
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
 import { getSettings } from "@/lib/localDb";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getModelInfo, getComboModels, getVisionBridgeProfile } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
+import { handleVisionBridgeChat } from "@/lib/visionBridge/bridge.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
@@ -85,6 +86,20 @@ export async function handleChat(request, clientRawRequest = null) {
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
+
+  // Vision Bridge profiles take precedence over ordinary combos. They are
+  // deliberately isolated from combo auto-switching: visual models extract
+  // attachments, while the configured text model always answers the user.
+  const visionBridgeProfile = await getVisionBridgeProfile(modelStr);
+  if (visionBridgeProfile) {
+    log.info("CHAT", `Vision Bridge "${modelStr}" | primary=${visionBridgeProfile.config.primaryModel} | vision=${visionBridgeProfile.config.visionModels.length}`);
+    return handleVisionBridgeChat({
+      body,
+      profile: visionBridgeProfile,
+      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+      log,
+    });
+  }
 
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
