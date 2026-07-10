@@ -38,6 +38,12 @@ export {
   createCombo, updateCombo, deleteCombo,
 } from "./repos/combosRepo.js";
 
+// Vision Bridge profiles
+export {
+  getVisionBridgeProfiles, getVisionBridgeProfileById, getVisionBridgeProfileByName,
+  createVisionBridgeProfile, updateVisionBridgeProfile, deleteVisionBridgeProfile,
+} from "./repos/visionBridgeProfilesRepo.js";
+
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,
@@ -79,6 +85,7 @@ export async function exportDb() {
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    visionBridgeProfiles: db.all(`SELECT * FROM visionBridgeProfiles`).map((r) => ({ id: r.id, name: r.name, enabled: r.enabled !== 0, config: parseJson(r.config, {}), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
     mitmAlias: {},
@@ -107,6 +114,8 @@ export async function importDb(payload) {
     db.run(`DELETE FROM proxyPools`);
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
+    db.run(`DELETE FROM visionBridgeProfiles`);
+    db.run(`DELETE FROM attachmentDescriptions`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
 
     // Settings
@@ -145,6 +154,12 @@ export async function importDb(payload) {
       db.run(
         `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
+      );
+    }
+    for (const profile of payload.visionBridgeProfiles || []) {
+      db.run(
+        `INSERT OR REPLACE INTO visionBridgeProfiles(id, name, enabled, config, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [profile.id, profile.name, profile.enabled === false ? 0 : 1, stringifyJson(profile.config || {}), profile.createdAt || new Date().toISOString(), profile.updatedAt || new Date().toISOString()]
       );
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {

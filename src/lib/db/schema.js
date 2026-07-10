@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -96,6 +96,40 @@ export const TABLES = {
       updatedAt: "TEXT NOT NULL",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_combo_name ON combos(name)"],
+  },
+  // A Vision Bridge is deliberately separate from a normal combo: it has a
+  // primary text model plus an ordered visual-extraction fallback chain.
+  visionBridgeProfiles: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      name: "TEXT UNIQUE NOT NULL",
+      enabled: "INTEGER DEFAULT 1",
+      config: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_vbp_name ON visionBridgeProfiles(name)",
+      "CREATE INDEX IF NOT EXISTS idx_vbp_enabled ON visionBridgeProfiles(enabled)",
+    ],
+  },
+  // Stores only extracted text and metadata, never the source attachment.
+  attachmentDescriptions: {
+    columns: {
+      cacheKey: "TEXT PRIMARY KEY",
+      profileId: "TEXT NOT NULL",
+      modality: "TEXT NOT NULL",
+      model: "TEXT NOT NULL",
+      promptVersion: "TEXT NOT NULL",
+      description: "TEXT NOT NULL",
+      expiresAt: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      lastAccessedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ad_profile_expiry ON attachmentDescriptions(profileId, expiresAt)",
+      "CREATE INDEX IF NOT EXISTS idx_ad_access ON attachmentDescriptions(lastAccessedAt)",
+    ],
   },
   kv: {
     columns: {
