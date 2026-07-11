@@ -6,6 +6,22 @@ import { findBridgeAttachments, replaceBridgeAttachments } from "./attachments.j
 
 const inFlightExtractions = new Map();
 
+function elapsedMs(startedAt) {
+  return Date.now() - startedAt;
+}
+
+async function withTimeout(operation, timeoutMs, message) {
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function hashCacheKey(profile, attachment, model) {
   // Remote URLs deliberately have no persistent content hash. They are processed
   // per request because URL content may change without its string changing.
@@ -86,27 +102,35 @@ async function extractWithModel({ body, attachment, model, handleSingleModel }) 
 async function extractWithFallback({ body, attachment, visionModels, handleSingleModel, log }) {
   let lastError = null;
   for (const model of visionModels.filter((entry) => entry.enabled !== false)) {
+    const startedAt = Date.now();
     try {
       const operation = extractWithModel({ body, attachment, model, handleSingleModel });
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`visual model ${model.model} timed out`)), model.timeoutMs));
-      const text = await Promise.race([operation, timeout]);
-      log?.info?.("VISION_BRIDGE", `visual extraction succeeded with ${model.model}`);
+      const text = await withTimeout(operation, model.timeoutMs, `visual model ${model.model} timed out`);
+      log?.info?.("VISION_BRIDGE", `visual extraction succeeded with ${model.model} in ${elapsedMs(startedAt)}ms`);
       return { text, model: model.model };
     } catch (error) {
       lastError = error;
-      log?.warn?.("VISION_BRIDGE", `visual extraction failed with ${model.model}; trying next`, { error: error.message });
+      log?.warn?.("VISION_BRIDGE", `visual extraction failed with ${model.model} in ${elapsedMs(startedAt)}ms; trying next`, { error: error.message });
     }
   }
   throw lastError || new Error("No enabled visual model is configured");
 }
 
 async function resolveAttachment({ body, profile, attachment, handleSingleModel, log }) {
+  const startedAt = Date.now();
   const cacheKey = hashCacheKey(profile, attachment, profile.config.visionModels[0]?.model || "");
   if (cacheKey) {
     const cached = await getAttachmentDescription(cacheKey);
-    if (cached?.description) return cached.description;
+    if (cached?.description) {
+      log?.info?.("VISION_BRIDGE", `attachment cache hit (${attachment.modality}) in ${elapsedMs(startedAt)}ms`);
+      return cached.description;
+    }
     const existing = inFlightExtractions.get(cacheKey);
-    if (existing) return existing;
+    if (existing) {
+      const description = await existing;
+      log?.info?.("VISION_BRIDGE", `attachment single-flight join (${attachment.modality}) in ${elapsedMs(startedAt)}ms`);
+      return description;
+    }
   }
 
   const job = (async () => {
@@ -124,6 +148,7 @@ async function resolveAttachment({ body, profile, attachment, handleSingleModel,
       });
       pruneAttachmentDescriptions({ maxEntries: profile.config.attachmentCacheMaxEntries }).catch(() => {});
     }
+    log?.info?.("VISION_BRIDGE", `attachment ${attachment.modality} resolved in ${elapsedMs(startedAt)}ms`);
     return result.text;
   })();
   if (cacheKey) inFlightExtractions.set(cacheKey, job);
@@ -145,14 +170,18 @@ async function answerWithTextFallback({ body, profile, handleSingleModel, log })
   const models = [profile.config.primaryModel, ...(profile.config.textFallbackModels || [])];
   let last = null;
   for (const model of models) {
+    const startedAt = Date.now();
     try {
       const result = await handleSingleModel(body, model);
-      if (result?.ok) return result;
+      if (result?.ok) {
+        log?.info?.("VISION_BRIDGE", `final answer succeeded with ${model} in ${elapsedMs(startedAt)}ms`);
+        return result;
+      }
       last = `text model ${model} returned ${result?.status || "an invalid response"}`;
-      log?.warn?.("VISION_BRIDGE", `${last}; trying next text model`);
+      log?.warn?.("VISION_BRIDGE", `${last} in ${elapsedMs(startedAt)}ms; trying next text model`);
     } catch (error) {
       last = `text model ${model} failed: ${error.message}`;
-      log?.warn?.("VISION_BRIDGE", `${last}; trying next text model`);
+      log?.warn?.("VISION_BRIDGE", `${last} in ${elapsedMs(startedAt)}ms; trying next text model`);
     }
   }
   return errorResponse(503, last || "All Vision Bridge text models are unavailable");
@@ -164,23 +193,35 @@ async function answerWithTextFallback({ body, profile, handleSingleModel, log })
  * models. This intentionally does not use normal combo auto-switching.
  */
 export async function handleVisionBridgeChat({ body, profile, handleSingleModel, log }) {
+  const startedAt = Date.now();
   const attachments = findBridgeAttachments(body);
   if (attachments.length === 0) {
     if (estimateTextTokens(body) > profile.config.primaryContextBudgetTokens) {
       return errorResponse(413, `Conversation exceeds the configured primary working budget (${profile.config.primaryContextBudgetTokens} tokens)`);
     }
-    return answerWithTextFallback({ body, profile, handleSingleModel, log });
+    const response = await answerWithTextFallback({ body, profile, handleSingleModel, log });
+    log?.info?.("VISION_BRIDGE", `request completed in ${elapsedMs(startedAt)}ms (text only)`);
+    return response;
   }
   if (attachments.length > profile.config.maxAttachmentsPerRequest) {
     return new Response(JSON.stringify({ error: { message: `Vision Bridge accepts at most ${profile.config.maxAttachmentsPerRequest} attachments per request` } }), { status: 413, headers: { "Content-Type": "application/json" } });
   }
   const descriptions = new Map();
-  for (const attachment of attachments) {
-    descriptions.set(attachment.id, await resolveAttachment({ body, profile, attachment, handleSingleModel, log }));
-  }
+  const concurrency = Math.max(1, Math.min(Number(profile.config.maxConcurrentExtractions) || 1, attachments.length));
+  let nextAttachment = 0;
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (true) {
+      const index = nextAttachment++;
+      if (index >= attachments.length) return;
+      const attachment = attachments[index];
+      descriptions.set(attachment.id, await resolveAttachment({ body, profile, attachment, handleSingleModel, log }));
+    }
+  }));
   const textOnlyBody = replaceBridgeAttachments(body, descriptions);
   if (estimateTextTokens(textOnlyBody) > profile.config.primaryContextBudgetTokens) {
     return errorResponse(413, `Conversation after attachment transcription exceeds the configured primary working budget (${profile.config.primaryContextBudgetTokens} tokens)`);
   }
-  return answerWithTextFallback({ body: textOnlyBody, profile, handleSingleModel, log });
+  const response = await answerWithTextFallback({ body: textOnlyBody, profile, handleSingleModel, log });
+  log?.info?.("VISION_BRIDGE", `request completed in ${elapsedMs(startedAt)}ms (${attachments.length} attachment${attachments.length === 1 ? "" : "s"}, extraction concurrency ${concurrency})`);
+  return response;
 }
