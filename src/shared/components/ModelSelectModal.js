@@ -32,7 +32,25 @@ export default function ModelSelectModal({
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
+  locale = "en",
 }) {
+  const copy = locale === "zh"
+    ? {
+        info: "点击模型即可选择。模型按已连接的提供商分组，可直接搜索。",
+        search: "搜索模型或提供商…",
+        combos: "组合模型",
+        custom: "自定义",
+        placeholder: "选择后可在输入框中补充模型 ID",
+        empty: "没有找到匹配的模型",
+      }
+    : {
+        info: "Click to add, click again to remove. Changes are saved automatically.",
+        search: "Search...",
+        combos: "Combos",
+        custom: "custom",
+        placeholder: "Select to pre-fill, then edit model ID in the input",
+        empty: "No models found",
+      };
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
     if (!kindFilter) return activeProviders;
@@ -422,7 +440,7 @@ export default function ModelSelectModal({
       {/* Info bar */}
       <div className="flex items-center gap-2 mb-3 px-2.5 py-2 bg-primary/8 border border-primary/20 rounded-lg text-xs text-text-muted">
         <span className="material-symbols-outlined text-primary shrink-0" style={{ fontSize: "14px" }}>info</span>
-        <span>Click to add, click again to remove. Changes are saved automatically.</span>
+        <span>{copy.info}</span>
       </div>
 
       {/* Search - compact */}
@@ -433,7 +451,7 @@ export default function ModelSelectModal({
           </span>
           <input
             type="text"
-            placeholder="Search..."
+            placeholder={copy.search}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-3 py-1.5 bg-surface border border-border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
@@ -448,7 +466,7 @@ export default function ModelSelectModal({
           <div>
             <div className="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5">
               <span className="material-symbols-outlined text-primary text-[14px]">layers</span>
-              <span className="text-xs font-medium text-primary">Combos</span>
+              <span className="text-xs font-medium text-primary">{copy.combos}</span>
               <span className="text-[10px] text-text-muted">({filteredCombos.length})</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -507,7 +525,7 @@ export default function ModelSelectModal({
                   <button
                     key={model.value}
                     onClick={() => handleSelect(model)}
-                    title={isPlaceholder ? "Select to pre-fill, then edit model ID in the input" : undefined}
+                    title={isPlaceholder ? copy.placeholder : undefined}
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer
                       ${isPlaceholder
@@ -532,7 +550,7 @@ export default function ModelSelectModal({
                       ) : model.isCustom ? (
                         <>
                           {model.name}
-                          <span className="text-[9px] opacity-60 font-normal">custom</span>
+                          <span className="text-[9px] opacity-60 font-normal">{copy.custom}</span>
                           <CapacityBadges caps={getCaps(model.value)} />
                         </>
                       ) : (
@@ -554,7 +572,7 @@ export default function ModelSelectModal({
             <span className="material-symbols-outlined text-2xl mb-1 block">
               search_off
             </span>
-            <p className="text-xs">No models found</p>
+            <p className="text-xs">{copy.empty}</p>
           </div>
         )}
       </div>
@@ -578,4 +596,5 @@ ModelSelectModal.propTypes = {
   kindFilter: PropTypes.string,
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
+  locale: PropTypes.oneOf(["en", "zh"]),
 };

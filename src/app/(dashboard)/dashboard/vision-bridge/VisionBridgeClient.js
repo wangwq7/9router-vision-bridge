@@ -1,24 +1,236 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Input, Toggle } from "@/shared/components";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Card, Input, ModelSelectModal, Toggle } from "@/shared/components";
 
-const defaults = () => ({
-  name: "glm-vision-bridge", enabled: true, primaryModel: "", textFallbacks: "", visionModels: [""],
-  primaryContextTokens: 1048576, primaryContextBudgetTokens: 930000, visionContextBudgetTokens: 180000,
-  attachmentCacheTtlHours: 72, maxConcurrentExtractions: 2, maxAttachmentsPerRequest: 8, strictVisionFailure: true,
+const createVisionModel = (model = "") => ({
+  model,
+  contextTokens: 262144,
+  contextBudgetTokens: 180000,
+  timeoutMs: 30000,
+  maxOutputTokens: 512,
+  enabled: true,
 });
 
-function ModelQueue({ models, setModels }) {
-  return <div className="space-y-2">{models.map((model, index) => <div key={index} className="flex gap-2"><Input className="flex-1" placeholder={index === 0 ? "Provider/vision-model" : `Backup vision model ${index}`} value={model} onChange={(e) => setModels(models.map((m, i) => i === index ? e.target.value : m))} /><Button variant="ghost" size="sm" onClick={() => setModels(models.filter((_, i) => i !== index))} disabled={models.length === 1}>Remove</Button></div>)}<Button variant="ghost" size="sm" onClick={() => setModels([...models, ""])} disabled={models.length >= 4}>Add backup</Button></div>;
+const defaults = () => ({
+  name: "glm-vision-bridge",
+  enabled: true,
+  primaryModel: "",
+  textFallbackModels: [],
+  visionModels: [createVisionModel()],
+  primaryContextTokens: 1048576,
+  primaryContextBudgetTokens: 930000,
+  attachmentCacheTtlHours: 72,
+  maxConcurrentExtractions: 2,
+  maxAttachmentsPerRequest: 8,
+  strictVisionFailure: true,
+});
+
+function modelName(value, emptyText = "尚未选择") {
+  return value?.trim() || emptyText;
+}
+
+function ModelPicker({ label, value, hint, onOpen, onClear, required = false }) {
+  return <div className="flex flex-col gap-1.5">
+    <div className="flex items-center justify-between gap-3">
+      <label className="text-sm font-medium text-text-main">{label}{required && <span className="ml-1 text-red-500">*</span>}</label>
+      {value && onClear && <button type="button" onClick={onClear} className="text-xs text-text-muted hover:text-red-500">清除</button>}
+    </div>
+    <button type="button" onClick={onOpen} className="group flex min-h-11 items-center justify-between gap-3 rounded-[10px] border border-border bg-surface-2 px-3 text-left transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
+      <span className={value ? "truncate font-mono text-sm text-text-main" : "text-sm text-text-muted"}>{modelName(value, "从已连接模型中选择")}</span>
+      <span className="material-symbols-outlined shrink-0 text-[20px] text-text-muted transition-transform group-hover:translate-y-px">expand_more</span>
+    </button>
+    {hint && <p className="text-xs leading-5 text-text-muted">{hint}</p>}
+  </div>;
+}
+
+function RouteArrow({ label }) {
+  return <div className="flex min-w-12 flex-col items-center justify-center gap-1 py-2 text-text-muted md:min-w-16">
+    <span className="material-symbols-outlined text-[20px] md:rotate-0">arrow_forward</span>
+    {label && <span className="max-w-20 text-center text-[10px] leading-3">{label}</span>}
+  </div>;
+}
+
+function RouteNode({ eyebrow, model, icon, tone = "default", detail }) {
+  const tones = {
+    default: "border-border bg-surface",
+    vision: "border-amber-500/25 bg-amber-500/5",
+    primary: "border-primary/30 bg-primary/5",
+    fallback: "border-border border-dashed bg-surface-2",
+  };
+  return <div className={`min-w-[172px] flex-1 rounded-xl border p-3 ${tones[tone]}`}>
+    <div className="mb-2 flex items-center gap-1.5 text-xs text-text-muted"><span className="material-symbols-outlined text-[15px]">{icon}</span>{eyebrow}</div>
+    <p className="truncate font-mono text-xs font-semibold text-text-main" title={model}>{modelName(model)}</p>
+    {detail && <p className="mt-1 text-[11px] leading-4 text-text-muted">{detail}</p>}
+  </div>;
+}
+
+function RoutePreview({ form, compact = false }) {
+  const visualModels = form.visionModels.filter((entry) => entry.model && entry.enabled !== false);
+  const textFallbacks = form.textFallbackModels.filter(Boolean);
+  return <div className={compact ? "mt-3" : "mt-4"}>
+    {!compact && <div className="mb-3 flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-text-muted"><span className="material-symbols-outlined mt-0.5 text-[15px] text-primary">info</span><span>图片或文件只会交给视觉模型提取文本；最终答复始终由主文本模型生成。视觉模型失败时，按队列自动尝试下一个。</span></div>}
+    <div className={`flex ${compact ? "flex-wrap" : "flex-col md:flex-row"} items-stretch gap-2 md:gap-0`}>
+      <RouteNode eyebrow="用户请求" model={form.name} icon="send" detail={compact ? null : "文本直接进入主模型；附件进入视觉队列"} />
+      <RouteArrow label={compact ? null : "发现附件"} />
+      <div className={`flex ${compact ? "flex-wrap" : "flex-col md:flex-row"} flex-1 items-stretch gap-2 md:gap-0`}>
+        {visualModels.length ? visualModels.map((entry, index) => <div key={`${entry.model}-${index}`} className={`flex ${compact ? "items-stretch" : "flex-col md:flex-row"} flex-1`}>
+          <RouteNode eyebrow={index === 0 ? "首选视觉模型" : `视觉备用 ${index}`} model={entry.model} icon="visibility" tone="vision" detail={compact ? null : `${Math.round(entry.timeoutMs / 1000)} 秒超时 · 最多 ${entry.maxOutputTokens} tokens`} />
+          <RouteArrow label={index < visualModels.length - 1 ? "失败回退" : "提取文本"} />
+        </div>) : <RouteNode eyebrow="视觉模型" model="请至少选择一个" icon="visibility_off" tone="fallback" />}
+      </div>
+      <RouteNode eyebrow="主文本模型" model={form.primaryModel} icon="psychology" tone="primary" detail={compact ? null : "结合会话和提取文本，生成最终答复"} />
+      {textFallbacks.map((model, index) => <div key={`${model}-${index}`} className="flex items-stretch"><RouteArrow label={compact ? null : "主模型不可用"} /><RouteNode eyebrow={`文本备用 ${index + 1}`} model={model} icon="restart_alt" tone="fallback" /></div>)}
+    </div>
+  </div>;
 }
 
 export default function VisionBridgeClient() {
-  const [profiles, setProfiles] = useState([]); const [form, setForm] = useState(defaults); const [editingId, setEditingId] = useState(null); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const refresh = useCallback(async () => { const res = await fetch("/api/vision-bridge", { cache: "no-store" }); if (res.ok) setProfiles((await res.json()).profiles || []); }, []);
-  useEffect(() => { refresh(); }, [refresh]);
-  const save = async () => { setBusy(true); setError(""); try { const visionModels = form.visionModels.filter(Boolean).map((model) => ({ model, contextTokens: 262144, contextBudgetTokens: form.visionContextBudgetTokens, timeoutMs: 30000, maxOutputTokens: 8000, enabled: true })); const payload = { name: form.name, enabled: form.enabled, config: { primaryModel: form.primaryModel, textFallbackModels: form.textFallbacks.split(",").map((x) => x.trim()).filter(Boolean), visionModels, primaryContextTokens: Number(form.primaryContextTokens), primaryContextBudgetTokens: Number(form.primaryContextBudgetTokens), visionContextBudgetTokens: Number(form.visionContextBudgetTokens), attachmentCacheTtlHours: Number(form.attachmentCacheTtlHours), attachmentCacheMaxEntries: 2000, maxConcurrentExtractions: Number(form.maxConcurrentExtractions), maxAttachmentsPerRequest: Number(form.maxAttachmentsPerRequest), maxPdfPagesPerRequest: 32, strictVisionFailure: form.strictVisionFailure } }; const res = await fetch(editingId ? `/api/vision-bridge/${editingId}` : "/api/vision-bridge", { method: editingId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const data = await res.json(); if (!res.ok) throw new Error(data.error); setForm(defaults()); setEditingId(null); await refresh(); } catch (e) { setError(e.message); } finally { setBusy(false); } };
-  const edit = (p) => { const c = p.config; setEditingId(p.id); setForm({ name:p.name, enabled:p.enabled, primaryModel:c.primaryModel, textFallbacks:(c.textFallbackModels||[]).join(", "), visionModels:(c.visionModels||[]).map((m)=>m.model), primaryContextTokens:c.primaryContextTokens, primaryContextBudgetTokens:c.primaryContextBudgetTokens, visionContextBudgetTokens:c.visionContextBudgetTokens, attachmentCacheTtlHours:c.attachmentCacheTtlHours, maxConcurrentExtractions:c.maxConcurrentExtractions, maxAttachmentsPerRequest:c.maxAttachmentsPerRequest, strictVisionFailure:c.strictVisionFailure }); window.scrollTo({ top: 0, behavior: "smooth" }); };
-  const remove = async (id) => { if (!confirm("Delete this Vision Bridge profile?")) return; await fetch(`/api/vision-bridge/${id}`, { method:"DELETE" }); await refresh(); };
-  return <div className="space-y-6 p-6 max-w-6xl"><div><h2 className="text-lg font-semibold flex items-center gap-2"><span className="material-symbols-outlined text-primary">visibility</span>Vision Bridge</h2><p className="text-sm text-text-muted mt-1">Visual models transcribe attachments; the primary text model always produces the final answer.</p></div><Card className="p-5 grid gap-5"><div className="grid md:grid-cols-2 gap-4"><Input label="External model name" hint="Use this exact no-slash name in Claude Code or any agent." value={form.name} onChange={(e) => setForm({...form, name:e.target.value})} /><Input label="Primary text model" required placeholder="Agentplan/glm-5.2" value={form.primaryModel} onChange={(e) => setForm({...form, primaryModel:e.target.value})} /></div><div><p className="text-sm font-medium text-text-main mb-2">Visual extraction fallback queue</p><ModelQueue models={form.visionModels} setModels={(visionModels) => setForm({...form, visionModels})} /><p className="text-xs text-text-muted mt-2">Models are tried in this order on timeout, rate limit, empty output, or upstream failure.</p></div><Input label="Text fallback models" hint="Optional. Comma separated; used only when the primary text model fails after transcription." placeholder="Provider/text-backup" value={form.textFallbacks} onChange={(e) => setForm({...form, textFallbacks:e.target.value})} /><div className="grid md:grid-cols-3 gap-4"><Input label="Primary context limit" type="number" value={form.primaryContextTokens} onChange={(e) => setForm({...form, primaryContextTokens:e.target.value})} /><Input label="Primary working budget" type="number" value={form.primaryContextBudgetTokens} onChange={(e) => setForm({...form, primaryContextBudgetTokens:e.target.value})} /><Input label="Vision working budget" type="number" value={form.visionContextBudgetTokens} onChange={(e) => setForm({...form, visionContextBudgetTokens:e.target.value})} /></div><div className="grid md:grid-cols-3 gap-4"><Input label="Cache TTL (hours)" type="number" value={form.attachmentCacheTtlHours} onChange={(e) => setForm({...form, attachmentCacheTtlHours:e.target.value})} /><Input label="Extraction concurrency" type="number" value={form.maxConcurrentExtractions} onChange={(e) => setForm({...form, maxConcurrentExtractions:e.target.value})} /><Input label="Max attachments/request" type="number" value={form.maxAttachmentsPerRequest} onChange={(e) => setForm({...form, maxAttachmentsPerRequest:e.target.value})} /></div><Toggle checked={form.strictVisionFailure} onChange={(strictVisionFailure) => setForm({...form, strictVisionFailure})} label="Strict visual failure" description="Return an error if no visual model can transcribe an attachment; never let the text model guess missing media." /><div className="rounded-[10px] bg-surface-2 p-4 text-sm text-text-muted"><b className="text-text-main">Flow preview:</b> attachment → {form.visionModels.filter(Boolean).join(" → ") || "vision model"} → transcription + history → {form.primaryModel || "primary text model"}</div>{error && <p className="text-sm text-red-500">{error}</p>}<div className="flex gap-2"><Button onClick={save} loading={busy}>{editingId ? "Save changes" : "Create Vision Bridge"}</Button>{editingId && <Button variant="ghost" onClick={() => {setEditingId(null);setForm(defaults())}}>Cancel</Button>}</div></Card><div className="space-y-3">{profiles.map((p) => <Card key={p.id} className="p-4 flex justify-between gap-4"><div><p className="font-mono text-sm font-medium">{p.name}</p><p className="text-xs text-text-muted mt-1">{p.config.primaryModel} · {p.config.visionModels?.map((m) => m.model).join(" → ")}</p></div><div className="flex gap-2 items-center"><span className={p.enabled ? "text-xs text-success" : "text-xs text-text-muted"}>{p.enabled ? "Enabled" : "Disabled"}</span><Button size="sm" variant="ghost" onClick={() => edit(p)}>Edit</Button><Button size="sm" variant="ghost" onClick={() => remove(p.id)}>Delete</Button></div></Card>)}</div></div>;
+  const [profiles, setProfiles] = useState([]);
+  const [form, setForm] = useState(defaults);
+  const [editingId, setEditingId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
+  const [picker, setPicker] = useState(null);
+
+  const refresh = useCallback(async () => {
+    const [profilesRes, providersRes, aliasesRes] = await Promise.all([
+      fetch("/api/vision-bridge", { cache: "no-store" }),
+      fetch("/api/providers"),
+      fetch("/api/models/alias"),
+    ]);
+    if (profilesRes.ok) setProfiles((await profilesRes.json()).profiles || []);
+    if (providersRes.ok) setActiveProviders((await providersRes.json()).connections || []);
+    if (aliasesRes.ok) setModelAliases((await aliasesRes.json()).aliases || {});
+  }, []);
+
+  useEffect(() => { refresh().catch(() => setError("无法读取视觉桥接配置，请刷新后重试。 ")).finally(() => setLoading(false)); }, [refresh]);
+
+  const chosenModels = useMemo(() => [form.primaryModel, ...form.textFallbackModels, ...form.visionModels.map((entry) => entry.model)].filter(Boolean), [form]);
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  const chooseModel = (selected) => {
+    const model = selected?.value || "";
+    if (!model || !picker) return;
+    setError("");
+    setForm((current) => {
+      if (picker.type === "primary") return { ...current, primaryModel: model };
+      if (picker.type === "textFallback") {
+        if (current.textFallbackModels.includes(model)) return current;
+        return { ...current, textFallbackModels: [...current.textFallbackModels, model] };
+      }
+      const visionModels = current.visionModels.map((entry, index) => index === picker.index ? { ...entry, model } : entry);
+      return { ...current, visionModels };
+    });
+    setPicker(null);
+  };
+
+  const updateVision = (index, patch) => setForm((current) => ({ ...current, visionModels: current.visionModels.map((entry, itemIndex) => itemIndex === index ? { ...entry, ...patch } : entry) }));
+  const removeVision = (index) => setForm((current) => ({ ...current, visionModels: current.visionModels.filter((_, itemIndex) => itemIndex !== index) }));
+
+  const save = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const visionModels = form.visionModels.filter((entry) => entry.model).map((entry) => ({
+        ...entry,
+        contextTokens: Number(entry.contextTokens),
+        contextBudgetTokens: Number(entry.contextBudgetTokens),
+        timeoutMs: Number(entry.timeoutMs),
+        maxOutputTokens: Number(entry.maxOutputTokens),
+      }));
+      const payload = {
+        name: form.name,
+        enabled: form.enabled,
+        config: {
+          primaryModel: form.primaryModel,
+          textFallbackModels: form.textFallbackModels,
+          visionModels,
+          primaryContextTokens: Number(form.primaryContextTokens),
+          primaryContextBudgetTokens: Number(form.primaryContextBudgetTokens),
+          visionContextBudgetTokens: 180000,
+          attachmentCacheTtlHours: Number(form.attachmentCacheTtlHours),
+          attachmentCacheMaxEntries: 2000,
+          maxConcurrentExtractions: Number(form.maxConcurrentExtractions),
+          maxAttachmentsPerRequest: Number(form.maxAttachmentsPerRequest),
+          maxPdfPagesPerRequest: 32,
+          strictVisionFailure: form.strictVisionFailure,
+        },
+      };
+      const response = await fetch(editingId ? `/api/vision-bridge/${editingId}` : "/api/vision-bridge", { method: editingId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存失败");
+      setForm(defaults());
+      setEditingId(null);
+      await refresh();
+    } catch (saveError) {
+      setError(saveError.message || "保存失败，请检查模型和参数。 ");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const edit = (profile) => {
+    const config = profile.config;
+    setEditingId(profile.id);
+    setForm({
+      name: profile.name,
+      enabled: profile.enabled,
+      primaryModel: config.primaryModel,
+      textFallbackModels: config.textFallbackModels || [],
+      visionModels: (config.visionModels || []).map((entry) => ({ ...createVisionModel(), ...entry })),
+      primaryContextTokens: config.primaryContextTokens,
+      primaryContextBudgetTokens: config.primaryContextBudgetTokens,
+      attachmentCacheTtlHours: config.attachmentCacheTtlHours,
+      maxConcurrentExtractions: config.maxConcurrentExtractions,
+      maxAttachmentsPerRequest: config.maxAttachmentsPerRequest,
+      strictVisionFailure: config.strictVisionFailure,
+    });
+    setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const remove = async (id) => {
+    if (!confirm("确定删除这个视觉桥接配置吗？外部模型名将立即不可用。")) return;
+    const response = await fetch(`/api/vision-bridge/${id}`, { method: "DELETE" });
+    if (response.ok) await refresh();
+  };
+
+  const pickerTitle = picker?.type === "primary" ? "选择主文本模型" : picker?.type === "textFallback" ? "添加文本备用模型" : "选择视觉模型";
+
+  return <div className="mx-auto max-w-7xl space-y-6">
+    <div className="flex flex-col gap-3 border-b border-border-subtle pb-5 md:flex-row md:items-end md:justify-between">
+      <div>
+        <div className="mb-2 flex items-center gap-2 text-primary"><span className="material-symbols-outlined text-[22px]">account_tree</span><span className="text-xs font-semibold tracking-[0.16em]">VISION BRIDGE</span></div>
+        <h2 className="text-2xl font-semibold tracking-tight text-text-main">视觉桥接</h2>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-text-muted">将图片等附件交给视觉模型识别并转写为不可信文本，再由指定的主文本模型完成最终任务。这样即使 GLM-5.2 不支持多模态，也始终保持为主要推理模型。</p>
+      </div>
+      <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5 text-text-muted"><span className="font-medium text-text-main">对外模型名：</span><code className="font-mono text-primary">{form.name || "glm-vision-bridge"}</code><br />Agent、Claude Code 等客户端填写此名称即可。</div>
+    </div>
+
+    <Card className="overflow-hidden">
+      <div className="border-b border-border-subtle bg-surface-2 px-5 py-4"><h3 className="font-semibold text-text-main">{editingId ? "编辑视觉桥接配置" : "新建视觉桥接配置"}</h3><p className="mt-1 text-xs leading-5 text-text-muted">按从上到下的顺序选择模型。所有模型从当前已连接的提供商中选择，无需手动输入模型名。</p></div>
+      <div className="space-y-7 p-5">
+        <section className="space-y-4"><div><h4 className="font-medium text-text-main">1. 对外入口与最终答复</h4><p className="mt-1 text-xs leading-5 text-text-muted">外部客户端始终调用同一个桥接模型；无论是否包含图片，最终回答优先交给主文本模型。</p></div><div className="grid gap-4 md:grid-cols-2"><Input label="对外模型名称" hint="仅限字母、数字、点、连字符和下划线；客户端调用时使用它。" value={form.name} onChange={(event) => setField("name", event.target.value)} /><ModelPicker label="主文本模型" required value={form.primaryModel} hint="附件被转成文本后，由此模型结合完整对话给出最终答案。" onOpen={() => setPicker({ type: "primary" })} onClear={() => setField("primaryModel", "")} /></div></section>
+
+        <section className="space-y-4 border-t border-border-subtle pt-6"><div><h4 className="font-medium text-text-main">2. 视觉识别回退队列</h4><p className="mt-1 text-xs leading-5 text-text-muted">第一个模型优先处理附件；遇到超时、限流、空输出或上游错误时，自动尝试下一个。最多配置 4 个。</p></div><div className="space-y-3">{form.visionModels.map((entry, index) => <div key={index} className="rounded-xl border border-border bg-surface p-4"><div className="flex flex-col gap-3 md:flex-row md:items-start"><div className="min-w-0 flex-1"><ModelPicker label={index === 0 ? "首选视觉模型" : `备用视觉模型 ${index}`} required value={entry.model} hint={index === 0 ? "建议选择已验证可识图且延迟稳定的模型。" : "仅在前序视觉模型不可用或未产生文本时调用。"} onOpen={() => setPicker({ type: "vision", index })} onClear={() => updateVision(index, { model: "" })} /></div><div className="flex items-center gap-2 pt-1"><Toggle checked={entry.enabled !== false} onChange={(enabled) => updateVision(index, { enabled })} label="启用" /><Button variant="ghost" size="sm" disabled={form.visionModels.length === 1} onClick={() => removeVision(index)}>删除</Button></div></div><details className="mt-4 rounded-lg bg-surface-2 px-3 py-2"><summary className="cursor-pointer text-xs font-medium text-text-main">高级识别参数</summary><p className="mt-1 text-xs leading-5 text-text-muted">截图建议将输出上限设为 512；复杂图片或表格可适当提高。超时后会立即进入下一备用模型。</p><div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Input label="模型上下文上限" type="number" value={entry.contextTokens} onChange={(event) => updateVision(index, { contextTokens: event.target.value })} /><Input label="工作预算" type="number" value={entry.contextBudgetTokens} onChange={(event) => updateVision(index, { contextBudgetTokens: event.target.value })} /><Input label="超时（毫秒）" type="number" value={entry.timeoutMs} onChange={(event) => updateVision(index, { timeoutMs: event.target.value })} /><Input label="提取输出上限" type="number" value={entry.maxOutputTokens} onChange={(event) => updateVision(index, { maxOutputTokens: event.target.value })} /></div></details></div>)}</div>{form.visionModels.length < 4 && <Button variant="ghost" size="sm" onClick={() => setForm((current) => ({ ...current, visionModels: [...current.visionModels, createVisionModel()] }))}><span className="material-symbols-outlined mr-1 text-[17px]">add</span>添加备用视觉模型</Button>}</section>
+
+        <section className="space-y-4 border-t border-border-subtle pt-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h4 className="font-medium text-text-main">3. 文本模型备用队列</h4><p className="mt-1 text-xs leading-5 text-text-muted">只有在视觉提取已经成功、但主文本模型不可用时才会使用。不会替代视觉模型。</p></div><Button variant="ghost" size="sm" onClick={() => setPicker({ type: "textFallback" })}><span className="material-symbols-outlined mr-1 text-[17px]">add</span>添加文本备用模型</Button></div>{form.textFallbackModels.length ? <div className="flex flex-wrap gap-2">{form.textFallbackModels.map((model, index) => <span key={`${model}-${index}`} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-xs text-text-main">{model}<button type="button" onClick={() => setField("textFallbackModels", form.textFallbackModels.filter((_, itemIndex) => itemIndex !== index))} className="material-symbols-outlined text-[15px] text-text-muted hover:text-red-500">close</button></span>)}</div> : <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-text-muted">未设置文本备用模型。主文本模型失败时将直接返回错误。</p>}</section>
+
+        <section className="space-y-4 border-t border-border-subtle pt-6"><div><h4 className="font-medium text-text-main">4. 容量、缓存与安全策略</h4><p className="mt-1 text-xs leading-5 text-text-muted">主模型工作预算用于防止转写文本挤占对话上下文；缓存可避免同一附件被重复识别。</p></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Input label="主模型上下文上限" type="number" value={form.primaryContextTokens} onChange={(event) => setField("primaryContextTokens", event.target.value)} /><Input label="主模型工作预算" type="number" value={form.primaryContextBudgetTokens} onChange={(event) => setField("primaryContextBudgetTokens", event.target.value)} /><Input label="附件缓存时长（小时）" type="number" value={form.attachmentCacheTtlHours} onChange={(event) => setField("attachmentCacheTtlHours", event.target.value)} /><Input label="并发识别数" type="number" value={form.maxConcurrentExtractions} onChange={(event) => setField("maxConcurrentExtractions", event.target.value)} /></div><div className="grid gap-4 md:grid-cols-2"><Input label="单请求最大附件数" type="number" value={form.maxAttachmentsPerRequest} onChange={(event) => setField("maxAttachmentsPerRequest", event.target.value)} /><Toggle checked={form.strictVisionFailure} onChange={(strictVisionFailure) => setField("strictVisionFailure", strictVisionFailure)} label="严格处理视觉失败" description="所有视觉模型均无法提取附件时直接报错，不让主文本模型猜测附件内容。" /></div></section>
+
+        <section className="border-t border-border-subtle pt-6"><div className="flex items-center justify-between gap-3"><div><h4 className="font-medium text-text-main">当前路由预览</h4><p className="mt-1 text-xs text-text-muted">保存后将按下图执行。编辑配置时预览会随选择实时更新。</p></div><span className={`rounded-full px-2 py-1 text-xs ${form.enabled ? "bg-success/10 text-success" : "bg-surface-2 text-text-muted"}`}>{form.enabled ? "已启用" : "未启用"}</span></div><RoutePreview form={form} /></section>
+
+        {error && <p className="rounded-lg border border-red-500/25 bg-red-500/5 px-3 py-2 text-sm text-red-500">{error}</p>}
+        <div className="flex flex-col gap-2 border-t border-border-subtle pt-5 sm:flex-row"><Button onClick={save} loading={busy}>{editingId ? "保存修改" : "创建视觉桥接"}</Button>{editingId && <Button variant="ghost" onClick={() => { setEditingId(null); setForm(defaults()); setError(""); }}>取消编辑</Button>}<Toggle checked={form.enabled} onChange={(enabled) => setField("enabled", enabled)} label="启用此桥接模型" /></div>
+      </div>
+    </Card>
+
+    <section className="space-y-3"><div><h3 className="font-semibold text-text-main">已保存的桥接模型</h3><p className="mt-1 text-xs text-text-muted">这里展示生产中实际生效的模型队列。点击编辑可调整模型顺序和参数。</p></div>{loading ? <Card className="p-5 text-sm text-text-muted">正在读取配置…</Card> : profiles.length ? profiles.map((profile) => <Card key={profile.id} className="p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><div className="flex items-center gap-2"><code className="font-mono text-sm font-semibold text-text-main">{profile.name}</code><span className={`rounded-full px-2 py-0.5 text-[11px] ${profile.enabled ? "bg-success/10 text-success" : "bg-surface-2 text-text-muted"}`}>{profile.enabled ? "已启用" : "已停用"}</span></div><p className="mt-2 text-xs leading-5 text-text-muted">主文本模型：<span className="font-mono text-text-main">{profile.config.primaryModel}</span> · 视觉队列：<span className="font-mono text-text-main">{profile.config.visionModels?.map((entry) => entry.model).join(" → ") || "未配置"}</span></p></div><div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => edit(profile)}>编辑</Button><Button size="sm" variant="ghost" onClick={() => remove(profile.id)}>删除</Button></div></div><RoutePreview form={{ ...profile.config, name: profile.name }} compact /></Card>) : <Card className="p-5 text-sm text-text-muted">尚未创建视觉桥接模型。</Card>}</section>
+
+    <ModelSelectModal isOpen={!!picker} onClose={() => setPicker(null)} onSelect={chooseModel} activeProviders={activeProviders} modelAliases={modelAliases} title={pickerTitle} addedModelValues={chosenModels} closeOnSelect locale="zh" />
+  </div>;
 }
