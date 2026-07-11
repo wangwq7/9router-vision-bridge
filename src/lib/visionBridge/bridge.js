@@ -48,10 +48,25 @@ function withoutInternalState(body) {
   const next = structuredClone(body);
   delete next.tools;
   delete next.tool_choice;
+  delete next.system;
+  delete next.systemInstruction;
+  delete next.instructions;
   delete next.previous_response_id;
   delete next.conversation_id;
   delete next.prompt_cache_key;
   delete next.metadata;
+  delete next.thinking;
+  delete next.reasoning;
+  delete next.reasoning_effort;
+  delete next.thinkingConfig;
+  delete next.enable_thinking;
+  delete next.thinking_budget;
+  delete next.output_config;
+  if (next.generationConfig) delete next.generationConfig.thinkingConfig;
+  if (next.request) {
+    delete next.request.systemInstruction;
+    if (next.request.generationConfig) delete next.request.generationConfig.thinkingConfig;
+  }
   next.stream = false;
   return next;
 }
@@ -61,6 +76,7 @@ function buildExtractionRequest(originalBody, attachment, maxOutputTokens) {
   const prompt = { type: "text", text: extractionInstruction(attachment.modality) };
   if (attachment.format === "responses") {
     next.input = [{ role: "user", content: [{ type: "input_text", text: prompt.text }, attachment.block] }];
+    next.reasoning = { effort: "low" };
     next.max_output_tokens = maxOutputTokens;
     return next;
   }
@@ -68,12 +84,17 @@ function buildExtractionRequest(originalBody, attachment, maxOutputTokens) {
     const contents = [{ role: "user", parts: [{ text: prompt.text }, attachment.block] }];
     if (Array.isArray(next.contents)) next.contents = contents;
     else next.request = { ...(next.request || {}), contents };
-    next.generationConfig = { ...(next.generationConfig || {}), maxOutputTokens };
+    next.generationConfig = { ...(next.generationConfig || {}), maxOutputTokens, thinkingConfig: { thinkingLevel: "low", includeThoughts: false } };
     return next;
   }
   next.messages = [{ role: "user", content: [prompt, attachment.block] }];
-  if (attachment.format === "claude") next.max_tokens = maxOutputTokens;
-  else next.max_tokens = maxOutputTokens;
+  if (attachment.format === "claude") {
+    next.thinking = { type: "adaptive" };
+    next.output_config = { effort: "low" };
+  } else {
+    next.reasoning_effort = "low";
+  }
+  next.max_tokens = maxOutputTokens;
   return next;
 }
 

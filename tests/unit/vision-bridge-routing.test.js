@@ -32,6 +32,9 @@ describe("Vision Bridge routing", () => {
     });
     const body = {
       messages: [{ role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image_url", image_url: "https://example.test/image.png" }] }],
+      system: "large client system prompt that must not reach visual extraction",
+      thinking: { type: "adaptive" },
+      output_config: { effort: "xhigh" },
       stream: true,
       tools: [{ type: "function", function: { name: "danger" } }],
     };
@@ -41,8 +44,36 @@ describe("Vision Bridge routing", () => {
     expect(calls.map((call) => call.model)).toEqual(["vision/first", "vision/second", "text/glm-5.2"]);
     expect(calls[1].body.stream).toBe(false);
     expect(calls[1].body.tools).toBeUndefined();
+    expect(calls[1].body.system).toBeUndefined();
+    expect(calls[1].body.thinking).toBeUndefined();
+    expect(calls[1].body.output_config).toBeUndefined();
+    expect(calls[1].body.reasoning_effort).toBe("low");
     expect(findBridgeAttachments(calls[2].body)).toEqual([]);
     expect(calls[2].body.messages[0].content[1].text).toContain("OCR: hello");
+  });
+
+  it("uses low adaptive thinking and removes the Claude system prompt for visual extraction", async () => {
+    const calls = [];
+    const handleSingleModel = vi.fn(async (body, model) => {
+      calls.push({ body, model });
+      return model.startsWith("vision/")
+        ? response(true, { content: [{ type: "text", text: "OCR: screenshot" }] })
+        : response(true, { content: [{ type: "text", text: "final" }] });
+    });
+    const body = {
+      system: [{ type: "text", text: "Cowork system instructions" }],
+      messages: [{ role: "user", content: [{ type: "text", text: "Describe it" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] }],
+      thinking: { type: "adaptive" },
+      output_config: { effort: "xhigh" },
+      stream: true,
+    };
+
+    const result = await handleVisionBridgeChat({ body, profile, handleSingleModel, log: {} });
+    expect(result.ok).toBe(true);
+    expect(calls[0].body.system).toBeUndefined();
+    expect(calls[0].body.thinking).toEqual({ type: "adaptive" });
+    expect(calls[0].body.output_config).toEqual({ effort: "low" });
+    expect(calls[0].body.stream).toBe(false);
   });
 
   it("uses the primary model directly for text-only requests", async () => {
