@@ -5,6 +5,10 @@ import { VISION_BRIDGE_PROMPT_VERSION } from "./config.js";
 import { findBridgeAttachments, replaceBridgeAttachments } from "./attachments.js";
 
 const inFlightExtractions = new Map();
+// Keep this deliberately specific: a broad pronoun match ("it", "this") would
+// restore old OCR on many unrelated turns. Chinese and English callers both
+// commonly use the terms below when they actually need attachment context.
+const ATTACHMENT_REFERENCE_RE = /(图片|图中|图里|截图|照片|附件|文件|文档|pdf|上图|前图|这张图|那张图|\b(?:image|photo|screenshot|attachment|file|document|pdf)\b)/i;
 
 function elapsedMs(startedAt) {
   return Date.now() - startedAt;
@@ -155,6 +159,53 @@ async function resolveAttachment({ body, profile, attachment, handleSingleModel,
   try { return await job; } finally { if (cacheKey) inFlightExtractions.delete(cacheKey); }
 }
 
+function textFromContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => block?.text || block?.input_text || "").join(" ");
+}
+
+function latestUserTurn(body) {
+  const source = Array.isArray(body?.messages)
+    ? { items: body.messages, content: (item) => item?.content }
+    : Array.isArray(body?.input)
+      ? { items: body.input, content: (item) => item?.content }
+      : Array.isArray(body?.contents)
+        ? { items: body.contents, content: (item) => item?.parts }
+        : Array.isArray(body?.request?.contents)
+          ? { items: body.request.contents, content: (item) => item?.parts }
+          : null;
+  if (!source) return { index: -1, text: "" };
+  for (let index = source.items.length - 1; index >= 0; index--) {
+    if (source.items[index]?.role === "user") {
+      return { index, text: textFromContent(source.content(source.items[index])) };
+    }
+  }
+  return { index: -1, text: "" };
+}
+
+function compactDescription(attachment, description, maxChars) {
+  const normalized = String(description || "").replace(/\s+/g, " ").trim();
+  const preview = normalized.length > maxChars ? `${normalized.slice(0, maxChars).trimEnd()}…` : normalized;
+  const kind = attachment.modality === "pdf" ? "文档" : "图片";
+  if (!preview) return `[历史${kind}附件已归档。用户明确提及该${kind}时，系统会恢复完整识别文本。]`;
+  return `[历史${kind}附件已归档；完整识别文本将在用户明确引用该${kind}时恢复。摘要：${preview}]`;
+}
+
+async function compactHistoricalAttachment({ profile, attachment, log }) {
+  const cacheKey = hashCacheKey(profile, attachment, profile.config.visionModels[0]?.model || "");
+  const compactChars = profile.config.historyAttachmentCompactChars ?? 600;
+  if (cacheKey) {
+    const cached = await getAttachmentDescription(cacheKey);
+    if (cached?.description) {
+      log?.info?.("VISION_BRIDGE", `historical ${attachment.modality} compacted from cache`);
+      return compactDescription(attachment, cached.description, compactChars);
+    }
+  }
+  log?.info?.("VISION_BRIDGE", `historical ${attachment.modality} omitted without a cache hit`);
+  return compactDescription(attachment, "", compactChars);
+}
+
 function errorResponse(status, message) {
   return new Response(JSON.stringify({ error: { message } }), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -206,14 +257,30 @@ export async function handleVisionBridgeChat({ body, profile, handleSingleModel,
   if (attachments.length > profile.config.maxAttachmentsPerRequest) {
     return new Response(JSON.stringify({ error: { message: `Vision Bridge accepts at most ${profile.config.maxAttachmentsPerRequest} attachments per request` } }), { status: 413, headers: { "Content-Type": "application/json" } });
   }
+  const latestTurn = latestUserTurn(body);
+  const onDemand = (profile.config.historyAttachmentMode ?? "onDemand") === "onDemand";
+  const currentAttachments = attachments.filter((attachment) => attachment.itemIndex === latestTurn.index);
+  const historicalAttachments = attachments.filter((attachment) => attachment.itemIndex !== latestTurn.index);
+  const explicitAttachmentReference = ATTACHMENT_REFERENCE_RE.test(latestTurn.text);
+  const restoreLimit = Number(profile.config.historyAttachmentRestoreMaxAttachments) || 2;
+  const restoredHistoricalAttachments = onDemand && explicitAttachmentReference
+    ? historicalAttachments.slice(-restoreLimit)
+    : onDemand ? [] : historicalAttachments;
+  const fullAttachments = new Set([...currentAttachments, ...restoredHistoricalAttachments].map((attachment) => attachment.id));
   const descriptions = new Map();
-  const concurrency = Math.max(1, Math.min(Number(profile.config.maxConcurrentExtractions) || 1, attachments.length));
+  const attachmentsToCompact = attachments.filter((attachment) => !fullAttachments.has(attachment.id));
+  await Promise.all(attachmentsToCompact.map(async (attachment) => {
+    descriptions.set(attachment.id, await compactHistoricalAttachment({ profile, attachment, log }));
+  }));
+
+  const attachmentsToResolve = attachments.filter((attachment) => fullAttachments.has(attachment.id));
+  const concurrency = Math.max(1, Math.min(Number(profile.config.maxConcurrentExtractions) || 1, attachmentsToResolve.length));
   let nextAttachment = 0;
   await Promise.all(Array.from({ length: concurrency }, async () => {
     while (true) {
       const index = nextAttachment++;
-      if (index >= attachments.length) return;
-      const attachment = attachments[index];
+      if (index >= attachmentsToResolve.length) return;
+      const attachment = attachmentsToResolve[index];
       descriptions.set(attachment.id, await resolveAttachment({ body, profile, attachment, handleSingleModel, log }));
     }
   }));
@@ -222,6 +289,6 @@ export async function handleVisionBridgeChat({ body, profile, handleSingleModel,
     return errorResponse(413, `Conversation after attachment transcription exceeds the configured primary working budget (${profile.config.primaryContextBudgetTokens} tokens)`);
   }
   const response = await answerWithTextFallback({ body: textOnlyBody, profile, handleSingleModel, log });
-  log?.info?.("VISION_BRIDGE", `request completed in ${elapsedMs(startedAt)}ms (${attachments.length} attachment${attachments.length === 1 ? "" : "s"}, extraction concurrency ${concurrency})`);
+  log?.info?.("VISION_BRIDGE", `request completed in ${elapsedMs(startedAt)}ms (${attachments.length} attachment${attachments.length === 1 ? "" : "s"}, full ${attachmentsToResolve.length}, compact ${attachmentsToCompact.length}, extraction concurrency ${concurrency})`);
   return response;
 }

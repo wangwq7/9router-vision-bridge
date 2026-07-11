@@ -15,6 +15,9 @@ export const DEFAULT_VISION_BRIDGE_CONFIG = {
   visionContextBudgetTokens: 180000,
   attachmentCacheTtlHours: 72,
   attachmentCacheMaxEntries: 2000,
+  historyAttachmentMode: "onDemand",
+  historyAttachmentCompactChars: 600,
+  historyAttachmentRestoreMaxAttachments: 2,
   maxConcurrentExtractions: 2,
   maxAttachmentsPerRequest: 8,
   maxPdfPagesPerRequest: 32,
@@ -27,6 +30,8 @@ const INTEGER_RANGES = {
   visionContextBudgetTokens: [4096, 1048576],
   attachmentCacheTtlHours: [1, 24 * 365],
   attachmentCacheMaxEntries: [0, 100000],
+  historyAttachmentCompactChars: [120, 4000],
+  historyAttachmentRestoreMaxAttachments: [1, 16],
   maxConcurrentExtractions: [1, 8],
   maxAttachmentsPerRequest: [1, 64],
   maxPdfPagesPerRequest: [1, 1000],
@@ -73,6 +78,9 @@ export function normalizeVisionBridgeConfig(input) {
   if (config.visionModels.length > MAX_VISION_MODELS) throw new Error(`at most ${MAX_VISION_MODELS} vision models are supported`);
 
   for (const [key, range] of Object.entries(INTEGER_RANGES)) config[key] = assertInteger(config[key], key, range);
+  if (!["retain", "onDemand"].includes(config.historyAttachmentMode)) {
+    throw new Error("historyAttachmentMode must be retain or onDemand");
+  }
   if (config.primaryContextBudgetTokens >= config.primaryContextTokens) {
     throw new Error("primaryContextBudgetTokens must be lower than primaryContextTokens");
   }

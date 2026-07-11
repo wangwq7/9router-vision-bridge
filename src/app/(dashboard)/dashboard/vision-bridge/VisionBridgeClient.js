@@ -21,6 +21,9 @@ const defaults = () => ({
   primaryContextTokens: 1048576,
   primaryContextBudgetTokens: 930000,
   attachmentCacheTtlHours: 72,
+  historyAttachmentMode: "onDemand",
+  historyAttachmentCompactChars: 600,
+  historyAttachmentRestoreMaxAttachments: 2,
   maxConcurrentExtractions: 2,
   maxAttachmentsPerRequest: 8,
   strictVisionFailure: true,
@@ -70,6 +73,9 @@ function RoutePreview({ form, compact = false }) {
   const textFallbacks = form.textFallbackModels.filter(Boolean);
   const visualLabel = visualModels.length ? `${visualModels.length} 个模型，按顺序回退` : "尚未选择视觉模型";
   const textLabel = textFallbacks.length ? `主模型失败后，依次尝试 ${textFallbacks.length} 个备用模型` : "无文本备用模型";
+  const historyLabel = form.historyAttachmentMode === "retain"
+    ? "历史附件：完整转写会持续保留在后续对话中"
+    : `历史附件：无关轮仅保留摘要；明确引用时恢复最近 ${form.historyAttachmentRestoreMaxAttachments || 2} 个完整转写`;
   return <div className={compact ? "mt-3" : "mt-4"}>
     {!compact && <div className="mb-4 flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-text-muted"><span className="material-symbols-outlined mt-0.5 text-[15px] text-primary">info</span><span>纯文本请求直接进入主文本模型；含附件的请求先经过视觉回退组，提取文本后再交由主文本模型完成任务。</span></div>}
     <div className="grid items-stretch gap-2 lg:grid-cols-[minmax(170px,.9fr)_auto_minmax(280px,1.45fr)_auto_minmax(210px,1fr)] lg:gap-3">
@@ -91,6 +97,7 @@ function RoutePreview({ form, compact = false }) {
         {textFallbacks.length ? <div className="mt-2 border-t border-primary/15 pt-2"><p className="mb-1.5 text-[10px] text-text-muted">{textLabel}</p><div className="space-y-1">{textFallbacks.map((model, index) => <div key={`${model}-${index}`} className="truncate rounded-md bg-surface/70 px-2 py-1.5 font-mono text-[11px] text-text-main">{index + 1}. {model}</div>)}</div></div> : !compact && <p className="mt-2 text-[10px] text-text-muted">{textLabel}</p>}
       </div>
     </div>
+    {!compact && <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-muted"><span className="material-symbols-outlined mt-0.5 text-[16px] text-primary">history</span><span>{historyLabel}</span></div>}
   </div>;
 }
 
@@ -163,6 +170,9 @@ export default function VisionBridgeClient() {
           visionContextBudgetTokens: 180000,
           attachmentCacheTtlHours: Number(form.attachmentCacheTtlHours),
           attachmentCacheMaxEntries: 2000,
+          historyAttachmentMode: form.historyAttachmentMode,
+          historyAttachmentCompactChars: Number(form.historyAttachmentCompactChars),
+          historyAttachmentRestoreMaxAttachments: Number(form.historyAttachmentRestoreMaxAttachments),
           maxConcurrentExtractions: Number(form.maxConcurrentExtractions),
           maxAttachmentsPerRequest: Number(form.maxAttachmentsPerRequest),
           maxPdfPagesPerRequest: 32,
@@ -194,6 +204,9 @@ export default function VisionBridgeClient() {
       primaryContextTokens: config.primaryContextTokens,
       primaryContextBudgetTokens: config.primaryContextBudgetTokens,
       attachmentCacheTtlHours: config.attachmentCacheTtlHours,
+      historyAttachmentMode: config.historyAttachmentMode ?? "onDemand",
+      historyAttachmentCompactChars: config.historyAttachmentCompactChars ?? 600,
+      historyAttachmentRestoreMaxAttachments: config.historyAttachmentRestoreMaxAttachments ?? 2,
       maxConcurrentExtractions: config.maxConcurrentExtractions,
       maxAttachmentsPerRequest: config.maxAttachmentsPerRequest,
       strictVisionFailure: config.strictVisionFailure,
@@ -229,7 +242,7 @@ export default function VisionBridgeClient() {
 
         <section className="space-y-4 border-t border-border-subtle pt-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h4 className="font-medium text-text-main">3. 文本模型备用队列</h4><p className="mt-1 text-xs leading-5 text-text-muted">只有在视觉提取已经成功、但主文本模型不可用时才会使用。不会替代视觉模型。</p></div><Button variant="ghost" size="sm" onClick={() => setPicker({ type: "textFallback" })}><span className="material-symbols-outlined mr-1 text-[17px]">add</span>添加文本备用模型</Button></div>{form.textFallbackModels.length ? <div className="flex flex-wrap gap-2">{form.textFallbackModels.map((model, index) => <span key={`${model}-${index}`} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-xs text-text-main">{model}<button type="button" onClick={() => setField("textFallbackModels", form.textFallbackModels.filter((_, itemIndex) => itemIndex !== index))} className="material-symbols-outlined text-[15px] text-text-muted hover:text-red-500">close</button></span>)}</div> : <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-text-muted">未设置文本备用模型。主文本模型失败时将直接返回错误。</p>}</section>
 
-        <section className="space-y-4 border-t border-border-subtle pt-6"><div><h4 className="font-medium text-text-main">4. 容量、缓存与安全策略</h4><p className="mt-1 text-xs leading-5 text-text-muted">主模型工作预算用于防止转写文本挤占对话上下文；缓存可避免同一附件被重复识别。</p></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Input label="主模型上下文上限" type="number" value={form.primaryContextTokens} onChange={(event) => setField("primaryContextTokens", event.target.value)} /><Input label="主模型工作预算" type="number" value={form.primaryContextBudgetTokens} onChange={(event) => setField("primaryContextBudgetTokens", event.target.value)} /><Input label="附件缓存时长（小时）" type="number" value={form.attachmentCacheTtlHours} onChange={(event) => setField("attachmentCacheTtlHours", event.target.value)} /><Input label="并发识别数" type="number" value={form.maxConcurrentExtractions} onChange={(event) => setField("maxConcurrentExtractions", event.target.value)} /></div><div className="grid gap-4 md:grid-cols-2"><Input label="单请求最大附件数" type="number" value={form.maxAttachmentsPerRequest} onChange={(event) => setField("maxAttachmentsPerRequest", event.target.value)} /><Toggle checked={form.strictVisionFailure} onChange={(strictVisionFailure) => setField("strictVisionFailure", strictVisionFailure)} label="严格处理视觉失败" description="所有视觉模型均无法提取附件时直接报错，不让主文本模型猜测附件内容。" /></div></section>
+        <section className="space-y-4 border-t border-border-subtle pt-6"><div><h4 className="font-medium text-text-main">4. 容量、缓存与历史附件策略</h4><p className="mt-1 text-xs leading-5 text-text-muted">主模型工作预算防止转写文本挤占对话上下文；缓存只保存识别文本和必要元数据，不保存原图或原始 PDF。</p></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Input label="主模型上下文上限" type="number" value={form.primaryContextTokens} onChange={(event) => setField("primaryContextTokens", event.target.value)} /><Input label="主模型工作预算" type="number" value={form.primaryContextBudgetTokens} onChange={(event) => setField("primaryContextBudgetTokens", event.target.value)} /><Input label="附件缓存时长（小时）" type="number" value={form.attachmentCacheTtlHours} onChange={(event) => setField("attachmentCacheTtlHours", event.target.value)} /><Input label="并发识别数" type="number" value={form.maxConcurrentExtractions} onChange={(event) => setField("maxConcurrentExtractions", event.target.value)} /></div><div className="grid gap-4 md:grid-cols-2"><Input label="单请求最大附件数" type="number" value={form.maxAttachmentsPerRequest} onChange={(event) => setField("maxAttachmentsPerRequest", event.target.value)} /><Toggle checked={form.strictVisionFailure} onChange={(strictVisionFailure) => setField("strictVisionFailure", strictVisionFailure)} label="严格处理视觉失败" description="所有视觉模型均无法提取附件时直接报错，不让主文本模型猜测附件内容。" /></div><div className="rounded-xl border border-border bg-surface p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><h5 className="text-sm font-medium text-text-main">历史附件上下文</h5><p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">“按需恢复”会在新一轮无关对话中仅保留短摘要；当用户明确提及图片、截图、附件、PDF、上图或 image 等词时，恢复最近的完整识别文本。它会降低主模型上下文与延迟，但不改变客户端重复上传原始附件的网络开销。</p></div><div className="flex rounded-lg border border-border bg-surface-2 p-1 text-xs"><button type="button" onClick={() => setField("historyAttachmentMode", "onDemand")} className={`rounded-md px-3 py-1.5 transition-colors ${form.historyAttachmentMode === "onDemand" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"}`}>按需恢复</button><button type="button" onClick={() => setField("historyAttachmentMode", "retain")} className={`rounded-md px-3 py-1.5 transition-colors ${form.historyAttachmentMode === "retain" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"}`}>完整保留</button></div></div>{form.historyAttachmentMode === "onDemand" && <div className="mt-4 grid gap-4 md:grid-cols-2"><Input label="历史摘要最大字符数" hint="120–4000。较短可减少上下文，较长保留更多线索。" type="number" value={form.historyAttachmentCompactChars} onChange={(event) => setField("historyAttachmentCompactChars", event.target.value)} /><Input label="单次最多恢复历史附件数" hint="1–16。只恢复最近的附件，避免一次引用塞满主模型上下文。" type="number" value={form.historyAttachmentRestoreMaxAttachments} onChange={(event) => setField("historyAttachmentRestoreMaxAttachments", event.target.value)} /></div>}</div></section>
 
         <section className="border-t border-border-subtle pt-6"><div className="flex items-center justify-between gap-3"><div><h4 className="font-medium text-text-main">当前路由预览</h4><p className="mt-1 text-xs text-text-muted">保存后将按下图执行。编辑配置时预览会随选择实时更新。</p></div><span className={`rounded-full px-2 py-1 text-xs ${form.enabled ? "bg-success/10 text-success" : "bg-surface-2 text-text-muted"}`}>{form.enabled ? "已启用" : "未启用"}</span></div><RoutePreview form={form} /></section>
 
