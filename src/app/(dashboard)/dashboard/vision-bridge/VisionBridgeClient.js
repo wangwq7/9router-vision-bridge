@@ -44,23 +44,23 @@ function ModelPicker({ label, value, hint, onOpen, onClear, required = false }) 
   </div>;
 }
 
-function RouteArrow({ label }) {
-  return <div className="flex min-w-12 flex-col items-center justify-center gap-1 py-2 text-text-muted md:min-w-16">
-    <span className="material-symbols-outlined text-[20px] md:rotate-0">arrow_forward</span>
-    {label && <span className="max-w-20 text-center text-[10px] leading-3">{label}</span>}
+function FlowDivider({ label }) {
+  return <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] text-text-muted lg:flex-col lg:py-0">
+    <span className="material-symbols-outlined text-[19px] lg:text-[22px]">arrow_forward</span>
+    {label && <span className="whitespace-nowrap">{label}</span>}
   </div>;
 }
 
-function RouteNode({ eyebrow, model, icon, tone = "default", detail }) {
+function RouteNode({ eyebrow, model, icon, tone = "default", detail, compact = false }) {
   const tones = {
     default: "border-border bg-surface",
     vision: "border-amber-500/25 bg-amber-500/5",
     primary: "border-primary/30 bg-primary/5",
     fallback: "border-border border-dashed bg-surface-2",
   };
-  return <div className={`min-w-[172px] flex-1 rounded-xl border p-3 ${tones[tone]}`}>
-    <div className="mb-2 flex items-center gap-1.5 text-xs text-text-muted"><span className="material-symbols-outlined text-[15px]">{icon}</span>{eyebrow}</div>
-    <p className="truncate font-mono text-xs font-semibold text-text-main" title={model}>{modelName(model)}</p>
+  return <div className={`rounded-lg border px-3 py-2.5 ${tones[tone]} ${compact ? "" : "min-h-[92px]"}`}>
+    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-text-muted"><span className="material-symbols-outlined text-[16px]">{icon}</span>{eyebrow}</div>
+    <p className="truncate font-mono text-sm font-semibold leading-5 text-text-main" title={model}>{modelName(model)}</p>
     {detail && <p className="mt-1 text-[11px] leading-4 text-text-muted">{detail}</p>}
   </div>;
 }
@@ -68,19 +68,28 @@ function RouteNode({ eyebrow, model, icon, tone = "default", detail }) {
 function RoutePreview({ form, compact = false }) {
   const visualModels = form.visionModels.filter((entry) => entry.model && entry.enabled !== false);
   const textFallbacks = form.textFallbackModels.filter(Boolean);
+  const visualLabel = visualModels.length ? `${visualModels.length} 个模型，按顺序回退` : "尚未选择视觉模型";
+  const textLabel = textFallbacks.length ? `主模型失败后，依次尝试 ${textFallbacks.length} 个备用模型` : "无文本备用模型";
   return <div className={compact ? "mt-3" : "mt-4"}>
-    {!compact && <div className="mb-3 flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-text-muted"><span className="material-symbols-outlined mt-0.5 text-[15px] text-primary">info</span><span>图片或文件只会交给视觉模型提取文本；最终答复始终由主文本模型生成。视觉模型失败时，按队列自动尝试下一个。</span></div>}
-    <div className={`flex ${compact ? "flex-wrap" : "flex-col md:flex-row"} items-stretch gap-2 md:gap-0`}>
-      <RouteNode eyebrow="用户请求" model={form.name} icon="send" detail={compact ? null : "文本直接进入主模型；附件进入视觉队列"} />
-      <RouteArrow label={compact ? null : "发现附件"} />
-      <div className={`flex ${compact ? "flex-wrap" : "flex-col md:flex-row"} flex-1 items-stretch gap-2 md:gap-0`}>
-        {visualModels.length ? visualModels.map((entry, index) => <div key={`${entry.model}-${index}`} className={`flex ${compact ? "items-stretch" : "flex-col md:flex-row"} flex-1`}>
-          <RouteNode eyebrow={index === 0 ? "首选视觉模型" : `视觉备用 ${index}`} model={entry.model} icon="visibility" tone="vision" detail={compact ? null : `${Math.round(entry.timeoutMs / 1000)} 秒超时 · 最多 ${entry.maxOutputTokens} tokens`} />
-          <RouteArrow label={index < visualModels.length - 1 ? "失败回退" : "提取文本"} />
-        </div>) : <RouteNode eyebrow="视觉模型" model="请至少选择一个" icon="visibility_off" tone="fallback" />}
+    {!compact && <div className="mb-4 flex items-start gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-text-muted"><span className="material-symbols-outlined mt-0.5 text-[15px] text-primary">info</span><span>纯文本请求直接进入主文本模型；含附件的请求先经过视觉回退组，提取文本后再交由主文本模型完成任务。</span></div>}
+    <div className="grid items-stretch gap-2 lg:grid-cols-[minmax(170px,.9fr)_auto_minmax(280px,1.45fr)_auto_minmax(210px,1fr)] lg:gap-3">
+      <RouteNode eyebrow="对外调用" model={form.name} icon="send" detail={compact ? null : "客户端始终调用这个桥接模型"} compact={compact} />
+      <FlowDivider label={compact ? null : "含附件时"} />
+      <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.035] p-3">
+        <div className="mb-2 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5 text-[11px] text-text-muted"><span className="material-symbols-outlined text-[16px]">visibility</span>视觉识别回退组</div><span className="text-[10px] text-text-muted">{visualLabel}</span></div>
+        <div className="space-y-2">
+          {visualModels.length ? visualModels.map((entry, index) => <div key={`${entry.model}-${index}`} className="flex items-center gap-2">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[10px] font-semibold text-amber-700 dark:text-amber-300">{index + 1}</span>
+            <div className="min-w-0 flex-1 rounded-md border border-amber-500/15 bg-surface/80 px-2.5 py-2"><p className="truncate font-mono text-xs font-semibold text-text-main">{entry.model}</p>{!compact && <p className="mt-0.5 text-[10px] text-text-muted">{Math.round(entry.timeoutMs / 1000)} 秒超时 · 提取上限 {entry.maxOutputTokens} tokens</p>}</div>
+          </div>) : <div className="rounded-md border border-dashed border-border px-2.5 py-3 text-xs text-text-muted">请先选择至少一个视觉模型</div>}
+        </div>
       </div>
-      <RouteNode eyebrow="主文本模型" model={form.primaryModel} icon="psychology" tone="primary" detail={compact ? null : "结合会话和提取文本，生成最终答复"} />
-      {textFallbacks.map((model, index) => <div key={`${model}-${index}`} className="flex items-stretch"><RouteArrow label={compact ? null : "主模型不可用"} /><RouteNode eyebrow={`文本备用 ${index + 1}`} model={model} icon="restart_alt" tone="fallback" /></div>)}
+      <FlowDivider label={compact ? null : "转写为文本"} />
+      <div className="rounded-xl border border-primary/25 bg-primary/[0.035] p-3">
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-text-muted"><span className="material-symbols-outlined text-[16px]">psychology</span>最终答复</div>
+        <RouteNode eyebrow="主文本模型" model={form.primaryModel} icon="stars" tone="primary" detail={compact ? null : "结合对话与提取文本生成最终回答"} compact />
+        {textFallbacks.length ? <div className="mt-2 border-t border-primary/15 pt-2"><p className="mb-1.5 text-[10px] text-text-muted">{textLabel}</p><div className="space-y-1">{textFallbacks.map((model, index) => <div key={`${model}-${index}`} className="truncate rounded-md bg-surface/70 px-2 py-1.5 font-mono text-[11px] text-text-main">{index + 1}. {model}</div>)}</div></div> : !compact && <p className="mt-2 text-[10px] text-text-muted">{textLabel}</p>}
+      </div>
     </div>
   </div>;
 }
