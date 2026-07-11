@@ -26,8 +26,8 @@ describe("Vision Bridge routing", () => {
     const calls = [];
     const handleSingleModel = vi.fn(async (body, model) => {
       calls.push({ body, model });
-      if (model === "vision/first") return response(false, { error: { message: "busy" } }, 503);
-      if (model === "vision/second") return response(true, { choices: [{ message: { content: "OCR: hello" } }] });
+      if (model === "vision/first(low)") return response(false, { error: { message: "busy" } }, 503);
+      if (model === "vision/second(low)") return response(true, { choices: [{ message: { content: "OCR: hello" } }] });
       return response(true, { choices: [{ message: { content: "final" } }] });
     });
     const body = {
@@ -41,7 +41,7 @@ describe("Vision Bridge routing", () => {
 
     const result = await handleVisionBridgeChat({ body, profile, handleSingleModel, log: { info: () => {}, warn: () => {} } });
     expect(result.ok).toBe(true);
-    expect(calls.map((call) => call.model)).toEqual(["vision/first", "vision/second", "text/glm-5.2"]);
+    expect(calls.map((call) => call.model)).toEqual(["vision/first(low)", "vision/second(low)", "text/glm-5.2"]);
     expect(calls[1].body.stream).toBe(false);
     expect(calls[1].body.tools).toBeUndefined();
     expect(calls[1].body.system).toBeUndefined();
@@ -62,7 +62,7 @@ describe("Vision Bridge routing", () => {
     });
     const body = {
       system: [{ type: "text", text: "Cowork system instructions" }],
-      messages: [{ role: "user", content: [{ type: "text", text: "Describe it" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] }],
+      messages: [{ role: "user", content: [{ type: "text", text: "Describe it" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "dW5pcXVlLXZpc2lvbi1sb3ctdGVzdA==" } }] }],
       thinking: { type: "adaptive" },
       output_config: { effort: "xhigh" },
       stream: true,
@@ -117,7 +117,7 @@ describe("Vision Bridge routing", () => {
 
     calls.length = 0;
     await handleVisionBridgeChat({ body: { ...body, messages: [...body.messages.slice(0, 1), { role: "user", content: "What is in the image above?" }] }, profile: onDemandProfile, handleSingleModel, log: {} });
-    expect(calls.map((call) => call.model)).toEqual(["vision/first", "text/glm-5.2"]);
+    expect(calls.map((call) => call.model)).toEqual(["vision/first(low)", "text/glm-5.2"]);
   });
 
   it("does not reject a long history merely because it contains archived attachments", async () => {

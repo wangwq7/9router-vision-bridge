@@ -115,7 +115,11 @@ function extractResponseText(json) {
 
 async function extractWithModel({ body, attachment, model, handleSingleModel }) {
   const request = buildExtractionRequest(body, attachment, model.maxOutputTokens);
-  const response = await handleSingleModel(request, model.model);
+  // The model suffix is the router's highest-priority thinking override. It
+  // prevents a provider/account default (or the outer Cowork request) from
+  // silently raising this OCR-only subrequest back to high/xhigh.
+  const lowThinkingModel = `${String(model.model).replace(/\([^()]+\)\s*$/, "").trim()}(low)`;
+  const response = await handleSingleModel(request, lowThinkingModel);
   if (!response?.ok) throw new Error(`visual model ${model.model} returned ${response?.status || "an invalid response"}`);
   let json;
   try { json = await response.clone().json(); } catch { throw new Error(`visual model ${model.model} returned non-JSON output`); }
