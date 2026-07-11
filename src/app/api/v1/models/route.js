@@ -5,7 +5,7 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getVisionBridgeProfiles } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -205,6 +205,13 @@ export async function buildModelsList(kindFilter) {
     console.log("Could not fetch combos");
   }
 
+  let visionBridgeProfiles = [];
+  try {
+    visionBridgeProfiles = await getVisionBridgeProfiles();
+  } catch (e) {
+    console.log("Could not fetch Vision Bridge profiles");
+  }
+
   let customModels = [];
   try {
     customModels = await getCustomModels();
@@ -235,6 +242,21 @@ export async function buildModelsList(kindFilter) {
   }
 
   const models = [];
+
+  // Vision Bridge profiles are client-facing LLM models. Although their
+  // internal visual stage is multi-modal, callers invoke the profile by this
+  // no-slash name just like a combo, so it must be present in /v1/models.
+  if (kindFilter.includes(LLM_KIND)) {
+    for (const profile of visionBridgeProfiles) {
+      if (!profile?.enabled || !profile?.name) continue;
+      models.push({
+        id: profile.name,
+        object: "model",
+        owned_by: "vision-bridge",
+        capabilities: { vision: true },
+      });
+    }
+  }
 
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
