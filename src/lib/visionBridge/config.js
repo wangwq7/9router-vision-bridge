@@ -18,6 +18,11 @@ export const DEFAULT_VISION_BRIDGE_CONFIG = {
   historyAttachmentMode: "onDemand",
   historyAttachmentCompactChars: 600,
   historyAttachmentRestoreMaxAttachments: 2,
+  autoCompressionEnabled: true,
+  autoCompressionThresholdTokens: 720000,
+  autoCompressionTargetTokens: 12000,
+  autoCompressionKeepRecentTurns: 8,
+  autoCompressionModel: "",
   maxConcurrentExtractions: 2,
   maxAttachmentsPerRequest: 8,
   maxPdfPagesPerRequest: 32,
@@ -32,6 +37,9 @@ const INTEGER_RANGES = {
   attachmentCacheMaxEntries: [0, 100000],
   historyAttachmentCompactChars: [120, 4000],
   historyAttachmentRestoreMaxAttachments: [1, 16],
+  autoCompressionThresholdTokens: [4096, 2097152],
+  autoCompressionTargetTokens: [1024, 65536],
+  autoCompressionKeepRecentTurns: [1, 64],
   maxConcurrentExtractions: [1, 8],
   maxAttachmentsPerRequest: [1, 64],
   maxPdfPagesPerRequest: [1, 1000],
@@ -71,6 +79,14 @@ function normalizeVisionModel(value, index) {
 export function normalizeVisionBridgeConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("config must be an object");
   const config = { ...DEFAULT_VISION_BRIDGE_CONFIG, ...input };
+  // These defaults must remain valid when a profile intentionally uses a
+  // smaller primary working budget than the global one-million-token default.
+  if (input.autoCompressionThresholdTokens == null) {
+    config.autoCompressionThresholdTokens = Math.min(DEFAULT_VISION_BRIDGE_CONFIG.autoCompressionThresholdTokens, Number(config.primaryContextBudgetTokens) - 1024);
+  }
+  if (input.autoCompressionTargetTokens == null) {
+    config.autoCompressionTargetTokens = Math.min(DEFAULT_VISION_BRIDGE_CONFIG.autoCompressionTargetTokens, Number(config.autoCompressionThresholdTokens) - 1024);
+  }
   config.primaryModel = assertString(config.primaryModel, "primaryModel");
   config.textFallbackModels = normalizeModelList(config.textFallbackModels, "textFallbackModels");
   config.visionModels = config.visionModels.map(normalizeVisionModel);
@@ -81,8 +97,17 @@ export function normalizeVisionBridgeConfig(input) {
   if (!["retain", "onDemand"].includes(config.historyAttachmentMode)) {
     throw new Error("historyAttachmentMode must be retain or onDemand");
   }
+  if (typeof config.autoCompressionEnabled !== "boolean") throw new Error("autoCompressionEnabled must be boolean");
+  if (typeof config.autoCompressionModel !== "string") throw new Error("autoCompressionModel must be a string");
+  config.autoCompressionModel = config.autoCompressionModel.trim();
   if (config.primaryContextBudgetTokens >= config.primaryContextTokens) {
     throw new Error("primaryContextBudgetTokens must be lower than primaryContextTokens");
+  }
+  if (config.autoCompressionThresholdTokens >= config.primaryContextBudgetTokens) {
+    throw new Error("autoCompressionThresholdTokens must be lower than primaryContextBudgetTokens");
+  }
+  if (config.autoCompressionTargetTokens >= config.autoCompressionThresholdTokens) {
+    throw new Error("autoCompressionTargetTokens must be lower than autoCompressionThresholdTokens");
   }
   if (typeof config.strictVisionFailure !== "boolean") throw new Error("strictVisionFailure must be boolean");
 
@@ -93,6 +118,9 @@ export function normalizeVisionBridgeConfig(input) {
   }
   if (config.textFallbackModels.some((model) => visionNames.includes(model))) {
     throw new Error("a model cannot be both a text fallback and a vision model");
+  }
+  if (config.autoCompressionModel && visionNames.includes(config.autoCompressionModel)) {
+    throw new Error("autoCompressionModel cannot be a vision model");
   }
   return config;
 }

@@ -24,6 +24,11 @@ const defaults = () => ({
   historyAttachmentMode: "onDemand",
   historyAttachmentCompactChars: 600,
   historyAttachmentRestoreMaxAttachments: 2,
+  autoCompressionEnabled: true,
+  autoCompressionThresholdTokens: 720000,
+  autoCompressionTargetTokens: 12000,
+  autoCompressionKeepRecentTurns: 8,
+  autoCompressionModel: "",
   maxConcurrentExtractions: 2,
   maxAttachmentsPerRequest: 8,
   strictVisionFailure: true,
@@ -125,7 +130,7 @@ export default function VisionBridgeClient() {
 
   useEffect(() => { refresh().catch(() => setError("无法读取视觉桥接配置，请刷新后重试。 ")).finally(() => setLoading(false)); }, [refresh]);
 
-  const chosenModels = useMemo(() => [form.primaryModel, ...form.textFallbackModels, ...form.visionModels.map((entry) => entry.model)].filter(Boolean), [form]);
+  const chosenModels = useMemo(() => [form.primaryModel, form.autoCompressionModel, ...form.textFallbackModels, ...form.visionModels.map((entry) => entry.model)].filter(Boolean), [form]);
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
   const chooseModel = (selected) => {
@@ -134,6 +139,7 @@ export default function VisionBridgeClient() {
     setError("");
     setForm((current) => {
       if (picker.type === "primary") return { ...current, primaryModel: model };
+      if (picker.type === "compression") return { ...current, autoCompressionModel: model };
       if (picker.type === "textFallback") {
         if (current.textFallbackModels.includes(model)) return current;
         return { ...current, textFallbackModels: [...current.textFallbackModels, model] };
@@ -173,6 +179,11 @@ export default function VisionBridgeClient() {
           historyAttachmentMode: form.historyAttachmentMode,
           historyAttachmentCompactChars: Number(form.historyAttachmentCompactChars),
           historyAttachmentRestoreMaxAttachments: Number(form.historyAttachmentRestoreMaxAttachments),
+          autoCompressionEnabled: form.autoCompressionEnabled,
+          autoCompressionThresholdTokens: Number(form.autoCompressionThresholdTokens),
+          autoCompressionTargetTokens: Number(form.autoCompressionTargetTokens),
+          autoCompressionKeepRecentTurns: Number(form.autoCompressionKeepRecentTurns),
+          autoCompressionModel: form.autoCompressionModel,
           maxConcurrentExtractions: Number(form.maxConcurrentExtractions),
           maxAttachmentsPerRequest: Number(form.maxAttachmentsPerRequest),
           maxPdfPagesPerRequest: 32,
@@ -207,6 +218,11 @@ export default function VisionBridgeClient() {
       historyAttachmentMode: config.historyAttachmentMode ?? "onDemand",
       historyAttachmentCompactChars: config.historyAttachmentCompactChars ?? 600,
       historyAttachmentRestoreMaxAttachments: config.historyAttachmentRestoreMaxAttachments ?? 2,
+      autoCompressionEnabled: config.autoCompressionEnabled ?? true,
+      autoCompressionThresholdTokens: config.autoCompressionThresholdTokens ?? 720000,
+      autoCompressionTargetTokens: config.autoCompressionTargetTokens ?? 12000,
+      autoCompressionKeepRecentTurns: config.autoCompressionKeepRecentTurns ?? 8,
+      autoCompressionModel: config.autoCompressionModel ?? "",
       maxConcurrentExtractions: config.maxConcurrentExtractions,
       maxAttachmentsPerRequest: config.maxAttachmentsPerRequest,
       strictVisionFailure: config.strictVisionFailure,
@@ -221,7 +237,7 @@ export default function VisionBridgeClient() {
     if (response.ok) await refresh();
   };
 
-  const pickerTitle = picker?.type === "primary" ? "选择主文本模型" : picker?.type === "textFallback" ? "添加文本备用模型" : "选择视觉模型";
+  const pickerTitle = picker?.type === "primary" ? "选择主文本模型" : picker?.type === "compression" ? "选择历史压缩模型" : picker?.type === "textFallback" ? "添加文本备用模型" : "选择视觉模型";
 
   return <div className="mx-auto max-w-7xl space-y-6">
     <div className="flex flex-col gap-3 border-b border-border-subtle pb-5 md:flex-row md:items-end md:justify-between">
@@ -243,6 +259,8 @@ export default function VisionBridgeClient() {
         <section className="space-y-4 border-t border-border-subtle pt-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h4 className="font-medium text-text-main">3. 文本模型备用队列</h4><p className="mt-1 text-xs leading-5 text-text-muted">只有在视觉提取已经成功、但主文本模型不可用时才会使用。不会替代视觉模型。</p></div><Button variant="ghost" size="sm" onClick={() => setPicker({ type: "textFallback" })}><span className="material-symbols-outlined mr-1 text-[17px]">add</span>添加文本备用模型</Button></div>{form.textFallbackModels.length ? <div className="flex flex-wrap gap-2">{form.textFallbackModels.map((model, index) => <span key={`${model}-${index}`} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-xs text-text-main">{model}<button type="button" onClick={() => setField("textFallbackModels", form.textFallbackModels.filter((_, itemIndex) => itemIndex !== index))} className="material-symbols-outlined text-[15px] text-text-muted hover:text-red-500">close</button></span>)}</div> : <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-text-muted">未设置文本备用模型。主文本模型失败时将直接返回错误。</p>}</section>
 
         <section className="space-y-4 border-t border-border-subtle pt-6"><div><h4 className="font-medium text-text-main">4. 容量、缓存与历史附件策略</h4><p className="mt-1 text-xs leading-5 text-text-muted">主模型工作预算防止转写文本挤占对话上下文；缓存只保存识别文本和必要元数据，不保存原图或原始 PDF。</p></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Input label="主模型上下文上限" type="number" value={form.primaryContextTokens} onChange={(event) => setField("primaryContextTokens", event.target.value)} /><Input label="主模型工作预算" type="number" value={form.primaryContextBudgetTokens} onChange={(event) => setField("primaryContextBudgetTokens", event.target.value)} /><Input label="附件缓存时长（小时）" type="number" value={form.attachmentCacheTtlHours} onChange={(event) => setField("attachmentCacheTtlHours", event.target.value)} /><Input label="并发识别数" type="number" value={form.maxConcurrentExtractions} onChange={(event) => setField("maxConcurrentExtractions", event.target.value)} /></div><div className="grid gap-4 md:grid-cols-2"><Input label="单请求最大附件数" hint="限制当前轮完整识别的附件数；按需模式下的旧附件摘要不计入此数。" type="number" value={form.maxAttachmentsPerRequest} onChange={(event) => setField("maxAttachmentsPerRequest", event.target.value)} /><Toggle checked={form.strictVisionFailure} onChange={(strictVisionFailure) => setField("strictVisionFailure", strictVisionFailure)} label="严格处理视觉失败" description="所有视觉模型均无法提取附件时直接报错，不让主文本模型猜测附件内容。" /></div><div className="rounded-xl border border-border bg-surface p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><h5 className="text-sm font-medium text-text-main">历史附件上下文</h5><p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">“按需恢复”会在新一轮无关对话中仅保留短摘要；当用户明确提及图片、截图、附件、PDF、上图或 image 等词时，恢复最近的完整识别文本。它会降低主模型上下文与延迟，但不改变客户端重复上传原始附件的网络开销。</p></div><div className="flex rounded-lg border border-border bg-surface-2 p-1 text-xs"><button type="button" onClick={() => setField("historyAttachmentMode", "onDemand")} className={`rounded-md px-3 py-1.5 transition-colors ${form.historyAttachmentMode === "onDemand" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"}`}>按需恢复</button><button type="button" onClick={() => setField("historyAttachmentMode", "retain")} className={`rounded-md px-3 py-1.5 transition-colors ${form.historyAttachmentMode === "retain" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text-main"}`}>完整保留</button></div></div>{form.historyAttachmentMode === "onDemand" && <div className="mt-4 grid gap-4 md:grid-cols-2"><Input label="历史摘要最大字符数" hint="120–4000。较短可减少上下文，较长保留更多线索。" type="number" value={form.historyAttachmentCompactChars} onChange={(event) => setField("historyAttachmentCompactChars", event.target.value)} /><Input label="单次最多恢复历史附件数" hint="1–16。只恢复最近的附件，且不会超过当前轮附件数量预留后的容量。" type="number" value={form.historyAttachmentRestoreMaxAttachments} onChange={(event) => setField("historyAttachmentRestoreMaxAttachments", event.target.value)} /></div>}</div></section>
+
+        <section className="space-y-4 border-t border-border-subtle pt-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h4 className="font-medium text-text-main">5. 自动压缩长对话</h4><p className="mt-1 max-w-3xl text-xs leading-5 text-text-muted">当请求达到阈值时，网关会把较早的对话压缩为带有“不可信上下文”标记的摘要，保留最近轮次原文后再交给主模型。压缩失败时不会静默丢失内容，而是返回明确错误。</p></div><Toggle checked={form.autoCompressionEnabled} onChange={(autoCompressionEnabled) => setField("autoCompressionEnabled", autoCompressionEnabled)} label="启用自动压缩" /></div>{form.autoCompressionEnabled && <div className="rounded-xl border border-border bg-surface p-4"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Input label="触发阈值（tokens）" hint="达到此大小便开始压缩；必须小于主模型工作预算。" type="number" value={form.autoCompressionThresholdTokens} onChange={(event) => setField("autoCompressionThresholdTokens", event.target.value)} /><Input label="摘要目标（tokens）" hint="较小更省上下文；较大保留更多历史细节。" type="number" value={form.autoCompressionTargetTokens} onChange={(event) => setField("autoCompressionTargetTokens", event.target.value)} /><Input label="保留最近轮数" hint="这些最近用户/助手消息保持原文，不会被摘要化。" type="number" value={form.autoCompressionKeepRecentTurns} onChange={(event) => setField("autoCompressionKeepRecentTurns", event.target.value)} /><ModelPicker label="历史压缩模型" value={form.autoCompressionModel} hint="留空即使用主文本模型；也可选更快、更便宜的文本模型。" onOpen={() => setPicker({ type: "compression" })} onClear={() => setField("autoCompressionModel", "")} /></div><p className="mt-3 text-xs leading-5 text-text-muted">压缩模型失败时会依次尝试文本备用模型；视觉模型不会参与此步骤。压缩只处理文本和转写结果，不保存原图。</p></div>}</section>
 
         <section className="border-t border-border-subtle pt-6"><div className="flex items-center justify-between gap-3"><div><h4 className="font-medium text-text-main">当前路由预览</h4><p className="mt-1 text-xs text-text-muted">保存后将按下图执行。编辑配置时预览会随选择实时更新。</p></div><span className={`rounded-full px-2 py-1 text-xs ${form.enabled ? "bg-success/10 text-success" : "bg-surface-2 text-text-muted"}`}>{form.enabled ? "已启用" : "未启用"}</span></div><RoutePreview form={form} /></section>
 

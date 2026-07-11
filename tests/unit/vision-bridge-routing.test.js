@@ -104,4 +104,36 @@ describe("Vision Bridge routing", () => {
     expect(handleSingleModel).toHaveBeenCalledTimes(1);
     expect(handleSingleModel.mock.calls[0][0].messages[0].content[0].text).toContain("历史图片附件已归档");
   });
+
+  it("automatically compresses old text turns before the primary model sees them", async () => {
+    const compressionProfile = {
+      ...profile,
+      config: {
+        ...profile.config,
+        primaryContextTokens: 4000,
+        primaryContextBudgetTokens: 3000,
+        autoCompressionEnabled: true,
+        autoCompressionThresholdTokens: 1000,
+        autoCompressionTargetTokens: 256,
+        autoCompressionKeepRecentTurns: 2,
+      },
+    };
+    const calls = [];
+    const handleSingleModel = vi.fn(async (body, model) => {
+      calls.push({ body, model });
+      const isCompression = body.messages?.[0]?.content?.includes("Compress the supplied earlier conversation");
+      return isCompression
+        ? response(true, { choices: [{ message: { content: "Earlier user goals and decisions." } }] })
+        : response(true, { choices: [{ message: { content: "final" } }] });
+    });
+    const body = {
+      messages: Array.from({ length: 10 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `turn-${index} ${"detail ".repeat(100)}` })),
+    };
+
+    const result = await handleVisionBridgeChat({ body, profile: compressionProfile, handleSingleModel, log: {} });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.messages.some((message) => String(message.content).includes("历史对话摘要"))).toBe(true);
+    expect(calls[1].body.messages.at(-1).content).toContain("turn-9");
+  });
 });
