@@ -254,17 +254,22 @@ export async function handleVisionBridgeChat({ body, profile, handleSingleModel,
     log?.info?.("VISION_BRIDGE", `request completed in ${elapsedMs(startedAt)}ms (text only)`);
     return response;
   }
-  if (attachments.length > profile.config.maxAttachmentsPerRequest) {
-    return new Response(JSON.stringify({ error: { message: `Vision Bridge accepts at most ${profile.config.maxAttachmentsPerRequest} attachments per request` } }), { status: 413, headers: { "Content-Type": "application/json" } });
-  }
   const latestTurn = latestUserTurn(body);
   const onDemand = (profile.config.historyAttachmentMode ?? "onDemand") === "onDemand";
   const currentAttachments = attachments.filter((attachment) => attachment.itemIndex === latestTurn.index);
   const historicalAttachments = attachments.filter((attachment) => attachment.itemIndex !== latestTurn.index);
+  const fullAttachmentLimit = profile.config.maxAttachmentsPerRequest;
+  if (currentAttachments.length > fullAttachmentLimit) {
+    return errorResponse(413, `Vision Bridge accepts at most ${fullAttachmentLimit} attachments in the current turn`);
+  }
   const explicitAttachmentReference = ATTACHMENT_REFERENCE_RE.test(latestTurn.text);
   const restoreLimit = Number(profile.config.historyAttachmentRestoreMaxAttachments) || 2;
+  const availableHistoricalSlots = Math.max(0, fullAttachmentLimit - currentAttachments.length);
+  if (!onDemand && historicalAttachments.length > availableHistoricalSlots) {
+    return errorResponse(413, `Vision Bridge accepts at most ${fullAttachmentLimit} attachments per request`);
+  }
   const restoredHistoricalAttachments = onDemand && explicitAttachmentReference
-    ? historicalAttachments.slice(-restoreLimit)
+    ? historicalAttachments.slice(-Math.min(restoreLimit, availableHistoricalSlots))
     : onDemand ? [] : historicalAttachments;
   const fullAttachments = new Set([...currentAttachments, ...restoredHistoricalAttachments].map((attachment) => attachment.id));
   const descriptions = new Map();

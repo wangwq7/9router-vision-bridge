@@ -88,4 +88,20 @@ describe("Vision Bridge routing", () => {
     await handleVisionBridgeChat({ body: { ...body, messages: [...body.messages.slice(0, 1), { role: "user", content: "What is in the image above?" }] }, profile: onDemandProfile, handleSingleModel, log: {} });
     expect(calls.map((call) => call.model)).toEqual(["vision/first", "text/glm-5.2"]);
   });
+
+  it("does not reject a long history merely because it contains archived attachments", async () => {
+    const onDemandProfile = { ...profile, config: { ...profile.config, maxAttachmentsPerRequest: 1, historyAttachmentMode: "onDemand", historyAttachmentCompactChars: 200, historyAttachmentRestoreMaxAttachments: 2 } };
+    const handleSingleModel = vi.fn(async () => response(true, { choices: [{ message: { content: "final" } }] }));
+    const body = {
+      messages: [
+        ...Array.from({ length: 4 }, (_, index) => ({ role: "user", content: [{ type: "image_url", image_url: `https://example.test/old-${index}.png` }] })),
+        { role: "user", content: "Please summarize our discussion." },
+      ],
+    };
+
+    const result = await handleVisionBridgeChat({ body, profile: onDemandProfile, handleSingleModel, log: {} });
+    expect(result.ok).toBe(true);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(handleSingleModel.mock.calls[0][0].messages[0].content[0].text).toContain("历史图片附件已归档");
+  });
 });
