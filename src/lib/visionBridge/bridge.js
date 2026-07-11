@@ -130,6 +130,34 @@ async function resolveAttachment({ body, profile, attachment, handleSingleModel,
   try { return await job; } finally { if (cacheKey) inFlightExtractions.delete(cacheKey); }
 }
 
+function errorResponse(status, message) {
+  return new Response(JSON.stringify({ error: { message } }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+// Conservative character-based guard. It deliberately fails instead of silently
+// truncating a coding conversation; a later summarizer can be an explicit policy.
+function estimateTextTokens(body) {
+  const json = JSON.stringify(body);
+  return Math.ceil(json.length / 3);
+}
+
+async function answerWithTextFallback({ body, profile, handleSingleModel, log }) {
+  const models = [profile.config.primaryModel, ...(profile.config.textFallbackModels || [])];
+  let last = null;
+  for (const model of models) {
+    try {
+      const result = await handleSingleModel(body, model);
+      if (result?.ok) return result;
+      last = `text model ${model} returned ${result?.status || "an invalid response"}`;
+      log?.warn?.("VISION_BRIDGE", `${last}; trying next text model`);
+    } catch (error) {
+      last = `text model ${model} failed: ${error.message}`;
+      log?.warn?.("VISION_BRIDGE", `${last}; trying next text model`);
+    }
+  }
+  return errorResponse(503, last || "All Vision Bridge text models are unavailable");
+}
+
 /**
  * Convert every media block into untrusted transcription text, then call the
  * configured primary text model. Visual models are never used as final answer
@@ -137,7 +165,12 @@ async function resolveAttachment({ body, profile, attachment, handleSingleModel,
  */
 export async function handleVisionBridgeChat({ body, profile, handleSingleModel, log }) {
   const attachments = findBridgeAttachments(body);
-  if (attachments.length === 0) return handleSingleModel(body, profile.config.primaryModel);
+  if (attachments.length === 0) {
+    if (estimateTextTokens(body) > profile.config.primaryContextBudgetTokens) {
+      return errorResponse(413, `Conversation exceeds the configured primary working budget (${profile.config.primaryContextBudgetTokens} tokens)`);
+    }
+    return answerWithTextFallback({ body, profile, handleSingleModel, log });
+  }
   if (attachments.length > profile.config.maxAttachmentsPerRequest) {
     return new Response(JSON.stringify({ error: { message: `Vision Bridge accepts at most ${profile.config.maxAttachmentsPerRequest} attachments per request` } }), { status: 413, headers: { "Content-Type": "application/json" } });
   }
@@ -146,5 +179,8 @@ export async function handleVisionBridgeChat({ body, profile, handleSingleModel,
     descriptions.set(attachment.id, await resolveAttachment({ body, profile, attachment, handleSingleModel, log }));
   }
   const textOnlyBody = replaceBridgeAttachments(body, descriptions);
-  return handleSingleModel(textOnlyBody, profile.config.primaryModel);
+  if (estimateTextTokens(textOnlyBody) > profile.config.primaryContextBudgetTokens) {
+    return errorResponse(413, `Conversation after attachment transcription exceeds the configured primary working budget (${profile.config.primaryContextBudgetTokens} tokens)`);
+  }
+  return answerWithTextFallback({ body: textOnlyBody, profile, handleSingleModel, log });
 }

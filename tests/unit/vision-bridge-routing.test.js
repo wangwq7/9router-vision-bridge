@@ -56,4 +56,12 @@ describe("Vision Bridge routing", () => {
     expect(handleSingleModel).toHaveBeenCalledTimes(1);
     expect(handleSingleModel.mock.calls[0][1]).toBe("text/glm-5.2");
   });
+
+  it("uses text fallbacks only after transcription succeeds", async () => {
+    const fallbackProfile = { ...profile, config: { ...profile.config, textFallbackModels: ["text/backup"] } };
+    const handleSingleModel = vi.fn(async (_body, model) => model === "text/glm-5.2" ? response(false, {}, 503) : response(true));
+    const result = await handleVisionBridgeChat({ body: { messages: [{ role: "user", content: "hello" }] }, profile: fallbackProfile, handleSingleModel, log: { warn: () => {} } });
+    expect(result.ok).toBe(true);
+    expect(handleSingleModel.mock.calls.map((call) => call[1])).toEqual(["text/glm-5.2", "text/backup"]);
+  });
 });
