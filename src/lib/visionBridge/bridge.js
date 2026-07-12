@@ -14,16 +14,36 @@ function elapsedMs(startedAt) {
   return Date.now() - startedAt;
 }
 
+// A timeout must cancel the upstream request before the next visual candidate
+// starts. Promise.race alone only abandons the local await and leaves the
+// provider request running, which can multiply account retries and charges.
 async function withTimeout(operation, timeoutMs, message) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return operation();
+
+  const controller = new AbortController();
   let timer;
-  try {
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-    });
-    return await Promise.race([operation, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
+  const completion = Promise.resolve().then(() => operation(controller.signal));
+  const outcome = await Promise.race([
+    completion.then(
+      (value) => ({ kind: "result", value }),
+      (error) => ({ kind: "error", error }),
+    ),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timer);
+
+  if (outcome.kind === "result") return outcome.value;
+  if (outcome.kind === "error") throw outcome.error;
+
+  const timeoutError = new Error(message);
+  timeoutError.name = "AbortError";
+  controller.abort(timeoutError);
+  // Do not begin fallback until the aborted operation has settled. The
+  // downstream chat path receives this signal and aborts its provider fetch.
+  try { await completion; } catch { /* timeout is the caller-visible error */ }
+  throw timeoutError;
 }
 
 function hashCacheKey(profile, attachment, model) {
@@ -113,13 +133,13 @@ function extractResponseText(json) {
   return responses || "";
 }
 
-async function extractWithModel({ body, attachment, model, handleSingleModel }) {
+async function extractWithModel({ body, attachment, model, handleSingleModel, signal }) {
   const request = buildExtractionRequest(body, attachment, model.maxOutputTokens);
   // The model suffix is the router's highest-priority thinking override. It
   // prevents a provider/account default (or the outer Cowork request) from
   // silently raising this OCR-only subrequest back to high/xhigh.
   const lowThinkingModel = `${String(model.model).replace(/\([^()]+\)\s*$/, "").trim()}(low)`;
-  const response = await handleSingleModel(request, lowThinkingModel);
+  const response = await handleSingleModel(request, lowThinkingModel, { signal });
   if (!response?.ok) throw new Error(`visual model ${model.model} returned ${response?.status || "an invalid response"}`);
   let json;
   try { json = await response.clone().json(); } catch { throw new Error(`visual model ${model.model} returned non-JSON output`); }
@@ -133,8 +153,11 @@ async function extractWithFallback({ body, attachment, visionModels, handleSingl
   for (const model of visionModels.filter((entry) => entry.enabled !== false)) {
     const startedAt = Date.now();
     try {
-      const operation = extractWithModel({ body, attachment, model, handleSingleModel });
-      const text = await withTimeout(operation, model.timeoutMs, `visual model ${model.model} timed out`);
+      const text = await withTimeout(
+        (signal) => extractWithModel({ body, attachment, model, handleSingleModel, signal }),
+        model.timeoutMs,
+        `visual model ${model.model} timed out`,
+      );
       log?.info?.("VISION_BRIDGE", `visual extraction succeeded with ${model.model} in ${elapsedMs(startedAt)}ms`);
       return { text, model: model.model };
     } catch (error) {
@@ -328,7 +351,11 @@ async function compressHistoryChunk({ text, targetTokens, profile, handleSingleM
         max_tokens: Math.min(Math.max(256, targetTokens), 65536),
         stream: false,
       };
-      const response = await withTimeout(handleSingleModel(request, model), 60000, `history compression with ${model} timed out`);
+      const response = await withTimeout(
+        (signal) => handleSingleModel(request, model, { signal }),
+        60000,
+        `history compression with ${model} timed out`,
+      );
       if (!response?.ok) throw new Error(`compression model ${model} returned ${response?.status || "an invalid response"}`);
       const summary = extractResponseText(await response.clone().json());
       if (!summary) throw new Error(`compression model ${model} returned no summary`);

@@ -15,11 +15,25 @@ function getTimeString() {
  * @param {string} options.provider - Provider name
  * @param {string} options.model - Model name
  */
-export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "" } = {}) {
+export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "", externalSignal } = {}) {
   const abortController = new AbortController();
   const startTime = Date.now();
   let disconnected = false;
   let abortTimeout = null;
+  let externalAbortHandler = null;
+
+  const removeExternalAbortListener = () => {
+    if (externalAbortHandler && externalSignal) {
+      externalSignal.removeEventListener("abort", externalAbortHandler);
+      externalAbortHandler = null;
+    }
+  };
+
+  if (externalSignal) {
+    externalAbortHandler = () => abortController.abort(externalSignal.reason);
+    if (externalSignal.aborted) externalAbortHandler();
+    else externalSignal.addEventListener("abort", externalAbortHandler, { once: true });
+  }
 
   // Only abnormal terminations are logged; normal completion is covered by "📊 done".
   // isError uses errorLine (always shown, ignores LOG_LEVEL) so failures survive quiet levels.
@@ -61,6 +75,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
         clearTimeout(abortTimeout);
         abortTimeout = null;
       }
+      removeExternalAbortListener();
     },
 
     // Call on error
@@ -72,6 +87,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
         clearTimeout(abortTimeout);
         abortTimeout = null;
       }
+      removeExternalAbortListener();
 
       if (error.name === "AbortError") {
         logStream("⚡", "ABORTED");
@@ -82,7 +98,10 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       onError?.(error);
     },
 
-    abort: () => abortController.abort()
+    abort: () => {
+      removeExternalAbortListener();
+      abortController.abort();
+    }
   };
 }
 
@@ -251,4 +270,3 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     onAbortTerminal
   );
 }
-

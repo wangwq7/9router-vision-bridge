@@ -62,13 +62,14 @@ describe("Vision Bridge routing", () => {
     });
     const body = {
       system: [{ type: "text", text: "Cowork system instructions" }],
-      messages: [{ role: "user", content: [{ type: "text", text: "Describe it" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "dW5pcXVlLXZpc2lvbi1sb3ctdGVzdA==" } }] }],
+      messages: [{ role: "user", content: [{ type: "text", text: "Describe it" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "dW5pcXVlLXZpc2lvbi1sb3ctdGVzdC12Mg==" } }] }],
       thinking: { type: "adaptive" },
       output_config: { effort: "xhigh" },
       stream: true,
     };
 
-    const result = await handleVisionBridgeChat({ body, profile, handleSingleModel, log: {} });
+    const isolatedProfile = { ...profile, id: `bridge-low-${Date.now()}-${Math.random()}` };
+    const result = await handleVisionBridgeChat({ body, profile: isolatedProfile, handleSingleModel, log: {} });
     expect(result.ok).toBe(true);
     expect(calls[0].body.system).toBeUndefined();
     expect(calls[0].body.thinking).toEqual({ type: "adaptive" });
@@ -94,6 +95,52 @@ describe("Vision Bridge routing", () => {
     const result = await handleVisionBridgeChat({ body: { messages: [{ role: "user", content: "hello" }] }, profile: fallbackProfile, handleSingleModel, log: { warn: () => {} } });
     expect(result.ok).toBe(true);
     expect(handleSingleModel.mock.calls.map((call) => call[1])).toEqual(["text/glm-5.2", "text/backup"]);
+  });
+
+  it("aborts a timed-out visual request before starting its fallback", async () => {
+    const timeoutProfile = {
+      ...profile,
+      config: {
+        ...profile.config,
+        visionModels: [
+          { model: "vision/first", timeoutMs: 10, maxOutputTokens: 1000, enabled: true },
+          { model: "vision/second", timeoutMs: 1000, maxOutputTokens: 1000, enabled: true },
+        ],
+      },
+    };
+    const calls = [];
+    let firstSettled = false;
+    let abortObserved = false;
+    const handleSingleModel = vi.fn((body, model, options = {}) => {
+      calls.push({ body, model, options });
+      if (model === "vision/first(low)") {
+        return new Promise((_, reject) => {
+          options.signal.addEventListener("abort", () => {
+            abortObserved = true;
+            setTimeout(() => {
+              firstSettled = true;
+              reject(options.signal.reason);
+            }, 5);
+          }, { once: true });
+        });
+      }
+      if (model === "vision/second(low)") {
+        expect(firstSettled).toBe(true);
+        return Promise.resolve(response(true, { choices: [{ message: { content: "OCR: fallback" } }] }));
+      }
+      return Promise.resolve(response(true, { choices: [{ message: { content: "final" } }] }));
+    });
+
+    const result = await handleVisionBridgeChat({
+      body: { messages: [{ role: "user", content: [{ type: "text", text: "What is this?" }, { type: "image_url", image_url: "https://example.test/cancel.png" }] }] },
+      profile: timeoutProfile,
+      handleSingleModel,
+      log: { info: () => {}, warn: () => {} },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(abortObserved).toBe(true);
+    expect(calls.map((call) => call.model)).toEqual(["vision/first(low)", "vision/second(low)", "text/glm-5.2"]);
   });
 
   it("compacts old attachments until the user explicitly refers to an image", async () => {

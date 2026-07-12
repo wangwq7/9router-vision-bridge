@@ -43,6 +43,26 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     expect(out.response.status).toBe(502);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("cancels a retry backoff without starting another upstream request", async () => {
+    const controller = new AbortController();
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 429: { attempts: 1, delayMs: 60000 } } });
+    let enteredRetryDelay;
+    const retryDelayEntered = new Promise((resolve) => { enteredRetryDelay = resolve; });
+    ex.computeRetryDelay = vi.fn(async () => {
+      enteredRetryDelay();
+      return 60000;
+    });
+    fetchMock.mockResolvedValueOnce(res(429));
+
+    const execution = ex.execute({ model: "m", body: {}, stream: false, credentials: creds, signal: controller.signal });
+    await retryDelayEntered;
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BaseExecutor.execute — baseUrls fallback", () => {
