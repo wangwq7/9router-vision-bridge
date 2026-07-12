@@ -116,6 +116,8 @@ PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run 
 - 控制面板：`http://localhost:20128/dashboard`
 - OpenAI 兼容 API：`http://localhost:20128/v1`
 
+本仓库的增强版还包含 **Vision Bridge（视觉桥接）**：让 GLM 等纯文本长上下文模型继续负责最终回答，图片仅交给独立的视觉模型链识别。配置、调用、缓存、超时、升级和回退说明见 [Vision Bridge 中文指南](./docs/VISION_BRIDGE.zh-CN.md)。
+
 ---
 
 ## 视频教程

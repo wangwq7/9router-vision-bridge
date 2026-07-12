@@ -119,6 +119,8 @@ Default URLs:
 - Dashboard: `http://localhost:20128/dashboard`
 - OpenAI-compatible API: `http://localhost:20128/v1`
 
+This enhanced fork also includes **Vision Bridge**: a text-first multimodal route that keeps GLM or another long-context text model in charge of the final answer while a separate visual model chain only extracts image information. See the [Chinese Vision Bridge guide](./docs/VISION_BRIDGE.zh-CN.md) for configuration, caching, timeout, upgrade and rollback details.
+
 ---
 
 ## Video Guides
