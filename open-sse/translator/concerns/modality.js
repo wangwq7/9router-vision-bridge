@@ -2,6 +2,7 @@
 // Driven by getCapabilitiesForModel: vision/audioInput/pdf. Replaces removed
 // media with a short text placeholder so messages never become empty.
 import { FORMATS } from "../formats.js";
+import { CLAUDE_BLOCK } from "../schema/blocks.js";
 
 // Placeholder text inserted where a media block was removed.
 // Current turn: explain the active model can't read what the user just sent.
@@ -57,6 +58,24 @@ function filterBlocks(blocks, capOf, caps, removed, isLast) {
   return out;
 }
 
+function filterClaudeBlocks(blocks, caps, isLast) {
+  const removed = new Set();
+  const out = [];
+  for (const block of blocks) {
+    const cap = capForClaudeBlock(block);
+    if (cap && caps[cap] === false) {
+      removed.add(cap);
+      continue;
+    }
+    if (block?.type === CLAUDE_BLOCK.TOOL_RESULT && Array.isArray(block.content)) {
+      block.content = filterClaudeBlocks(block.content, caps, isLast);
+    }
+    out.push(block);
+  }
+  for (const cap of removed) out.push({ type: CLAUDE_BLOCK.TEXT, text: ph(cap, isLast) });
+  return out;
+}
+
 // OpenAI / OpenAI-compatible chat messages[].content[].
 function stripOpenAI(body, caps) {
   if (!Array.isArray(body.messages)) return;
@@ -74,8 +93,7 @@ function stripClaude(body, caps) {
   const last = body.messages.length - 1;
   body.messages.forEach((msg, i) => {
     if (!Array.isArray(msg.content)) return;
-    const removed = new Set();
-    msg.content = filterBlocks(msg.content, capForClaudeBlock, caps, removed, i === last);
+    msg.content = filterClaudeBlocks(msg.content, caps, i === last);
   });
 }
 

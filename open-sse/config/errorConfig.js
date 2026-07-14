@@ -50,13 +50,21 @@ const COOLDOWN = {
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
- * Each rule: { text?, status?, cooldownMs?, backoff? }
+ * Each rule: { text?, status?, cooldownMs?, backoff?, shouldFallback? }
  *   - text: substring match (case-insensitive) on error message
  *   - status: HTTP status code match
  *   - cooldownMs: fixed cooldown duration
  *   - backoff: true = use exponential backoff (rate limit)
+ *   - shouldFallback: false = return the request error without locking the account/model
  */
 export const ERROR_RULES = [
+  // Client/request-shape errors must be returned to the caller, not interpreted
+  // as model/account health failures. Otherwise one leaked media block locks a
+  // healthy text model and cascades into unrelated fallback traffic.
+  { text: "only support text input",   shouldFallback: false },
+  { text: "only supports text input",  shouldFallback: false },
+  { text: "does not support image",    shouldFallback: false },
+  { text: "unsupported image input",   shouldFallback: false },
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },

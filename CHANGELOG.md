@@ -1,3 +1,13 @@
+# v0.5.30-vision-bridge.4 (2026-07-14)
+
+## Fixes
+- **Vision Bridge**: detect and transcribe Claude images/PDFs nested in `tool_result.content[]` while preserving the enclosing tool result.
+- **Vision Bridge**: use endpoint-derived wire formats and exact media paths instead of top-level block heuristics.
+- **Vision Bridge**: fail closed before every text-model dispatch when unresolved media remains in conversation content.
+- **Vision Bridge**: include a bounded nearby user request in visual extraction prompts and version the resulting cache entries.
+- **Fallback**: do not model-lock healthy accounts for deterministic text-only modality rejection errors.
+- **Modality guard**: strip unsupported Claude media recursively inside tool results for non-bridge text-model routes.
+
 # v0.5.30 (2026-07-10)
 
 ## Features

@@ -62,6 +62,22 @@ describe("stripUnsupportedModalities", () => {
     expect(types).toContain("text");
   });
 
+  it("claude: strips media nested in tool_result without removing the tool result", () => {
+    const body = { messages: [{ role: "user", content: [{
+      type: "tool_result",
+      tool_use_id: "toolu_1",
+      content: [
+        { type: "text", text: "captured" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "x" } },
+      ],
+    }] }] };
+    stripUnsupportedModalities(body, FORMATS.CLAUDE, NO_VISION);
+    const toolResult = body.messages[0].content[0];
+    expect(toolResult).toMatchObject({ type: "tool_result", tool_use_id: "toolu_1" });
+    expect(toolResult.content.some((block) => block.type === "image")).toBe(false);
+    expect(toolResult.content.some((block) => /image omitted/.test(block.text || ""))).toBe(true);
+  });
+
   it("gemini: strips inlineData image by mime when vision:false", () => {
     const body = { contents: [{ role: "user", parts: [
       { text: "hi" },

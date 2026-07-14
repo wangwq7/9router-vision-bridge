@@ -20,6 +20,7 @@ import { handleVisionBridgeChat } from "@/lib/visionBridge/bridge.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import { detectFormat } from "open-sse/services/provider.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
@@ -92,12 +93,16 @@ export async function handleChat(request, clientRawRequest = null) {
   // attachments, while the configured text model always answers the user.
   const visionBridgeProfile = await getVisionBridgeProfile(modelStr);
   if (visionBridgeProfile) {
+    const sourceFormat = request?.url
+      ? detectFormatByEndpoint(new URL(request.url).pathname, body) || detectFormat(body)
+      : detectFormat(body);
     log.info("CHAT", `Vision Bridge "${modelStr}" | primary=${visionBridgeProfile.config.primaryModel} | vision=${visionBridgeProfile.config.visionModels.length}`);
     return handleVisionBridgeChat({
       body,
       profile: visionBridgeProfile,
       handleSingleModel: (b, m, options) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, options),
       log,
+      sourceFormat,
     });
   }
 

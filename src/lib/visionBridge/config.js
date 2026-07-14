@@ -4,7 +4,8 @@
 
 export const VISION_BRIDGE_NAME_RE = /^[a-zA-Z0-9_.-]+$/;
 export const MAX_VISION_MODELS = 4;
-export const VISION_BRIDGE_PROMPT_VERSION = "v1";
+export const VISION_BRIDGE_PROMPT_VERSION = "v2";
+export const VISION_BRIDGE_USER_CONTEXT_MAX_CHARS = 4000;
 
 export const DEFAULT_VISION_BRIDGE_CONFIG = {
   primaryModel: "",

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { findBridgeAttachments } from "../../src/lib/visionBridge/attachments.js";
 import { handleVisionBridgeChat } from "../../src/lib/visionBridge/bridge.js";
+import { FORMATS } from "../../open-sse/translator/formats.js";
 
 function response(ok, json = {}, status = 200) {
   const make = () => ({ ok, status, clone: make, json: async () => json });
@@ -87,6 +88,53 @@ describe("Vision Bridge routing", () => {
     });
     expect(handleSingleModel).toHaveBeenCalledTimes(1);
     expect(handleSingleModel.mock.calls[0][1]).toBe("text/glm-5.2");
+  });
+
+  it("extracts a Claude tool_result image and keeps GLM input text-only", async () => {
+    const calls = [];
+    const handleSingleModel = vi.fn(async (requestBody, model) => {
+      calls.push({ body: requestBody, model });
+      return model.startsWith("vision/")
+        ? response(true, { content: [{ type: "text", text: "OCR: nested screenshot failure" }] })
+        : response(true, { content: [{ type: "text", text: "final" }] });
+    });
+    const body = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Find the configuration error in this screenshot." }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "screenshot", input: {} }] },
+        { role: "user", content: [{
+          type: "tool_result",
+          tool_use_id: "toolu_1",
+          content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "dW5pcXVlLW5lc3RlZC1yb3V0aW5n" } }],
+        }] },
+      ],
+      stream: true,
+    };
+
+    const isolatedProfile = { ...profile, id: `nested-${Date.now()}-${Math.random()}` };
+    const result = await handleVisionBridgeChat({ body, profile: isolatedProfile, handleSingleModel, sourceFormat: FORMATS.CLAUDE, log: {} });
+
+    expect(result.ok).toBe(true);
+    expect(calls.map((call) => call.model)).toEqual(["vision/first(low)", "text/glm-5.2"]);
+    expect(calls[0].body.messages[0].content[0].text).toContain("Find the configuration error");
+    expect(calls[1].body.messages[2].content[0]).toMatchObject({ type: "tool_result", tool_use_id: "toolu_1" });
+    expect(calls[1].body.messages[2].content[0].content[0].text).toContain("OCR: nested screenshot failure");
+    expect(findBridgeAttachments(calls[1].body, FORMATS.CLAUDE)).toEqual([]);
+    expect(JSON.stringify(calls[1].body)).not.toContain("dW5pcXVlLW5lc3RlZC1yb3V0aW5n");
+  });
+
+  it("fails closed before calling GLM when media is in an unsupported container", async () => {
+    const handleSingleModel = vi.fn(async () => response(true));
+    const body = {
+      messages: [{ role: "user", content: [{
+        type: "custom_container",
+        payload: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "eA==" } }],
+      }] }],
+    };
+    const result = await handleVisionBridgeChat({ body, profile, handleSingleModel, sourceFormat: FORMATS.CLAUDE, log: {} });
+    expect(result.status).toBe(422);
+    expect(await result.json()).toMatchObject({ error: { message: expect.stringContaining("payload[0]") } });
+    expect(handleSingleModel).not.toHaveBeenCalled();
   });
 
   it("uses text fallbacks only after transcription succeeds", async () => {
