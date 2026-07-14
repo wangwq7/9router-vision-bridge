@@ -1,6 +1,6 @@
 # 9router Vision Bridge 中文指南
 
-本文适用于 `wangwq7/9router-vision-bridge` 的 `v0.5.30-vision-bridge.5` 发布线。它基于上游 9router `v0.5.30`，增加可配置的多模态桥接路由。
+本文适用于 `wangwq7/9router-vision-bridge` 的 `v0.5.30-vision-bridge.6` 发布线。它基于上游 9router `v0.5.30`，增加可配置的多模态桥接路由。
 
 ## 功能定位
 

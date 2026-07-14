@@ -1,3 +1,8 @@
+# v0.5.30-vision-bridge.6 (2026-07-14)
+
+## Fixes
+- **Fallback**: HTTP 400 request/input errors can no longer create account or model locks; recognized image validation errors may still fall through to the next configured vision model.
+
 # v0.5.30-vision-bridge.5 (2026-07-14)
 
 ## Fixes

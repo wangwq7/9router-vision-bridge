@@ -67,6 +67,7 @@ export const ERROR_RULES = [
   { text: "does not support image",    shouldFallback: false },
   { text: "unsupported image input",   shouldFallback: false },
   { text: "image dimensions",          shouldFallback: false, shouldModelFallback: true },
+  { text: "total pixels",              shouldFallback: false, shouldModelFallback: true },
   { text: "unsupported image format",  shouldFallback: false, shouldModelFallback: true },
   { text: "failed to decode image",    shouldFallback: false, shouldModelFallback: true },
   { text: "invalid image",             shouldFallback: false, shouldModelFallback: true },
@@ -81,6 +82,7 @@ export const ERROR_RULES = [
   { text: "overloaded",               backoff: true },
 
   // --- Status-based rules (fallback when text doesn't match) ---
+  { status: 400, shouldFallback: false },
   { status: 401, cooldownMs: COOLDOWN.long },
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },

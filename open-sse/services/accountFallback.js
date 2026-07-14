@@ -50,6 +50,14 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
 
     // Status-based rule: match HTTP status code
     if (rule.status && rule.status === status) {
+      if (rule.shouldFallback === false) {
+        return {
+          shouldFallback: false,
+          shouldModelFallback: rule.shouldModelFallback === true,
+          cooldownMs: 0,
+          newBackoffLevel: backoffLevel,
+        };
+      }
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
         return {
