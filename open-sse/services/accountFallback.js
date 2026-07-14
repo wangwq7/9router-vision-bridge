@@ -18,7 +18,7 @@ export function getQuotaCooldown(backoffLevel = 0) {
  * @param {number} status - HTTP status code
  * @param {string} errorText - Error message text
  * @param {number} backoffLevel - Current backoff level for exponential backoff
- * @returns {{ shouldFallback: boolean, cooldownMs: number, newBackoffLevel?: number }}
+ * @returns {{ shouldFallback: boolean, shouldModelFallback: boolean, cooldownMs: number, newBackoffLevel?: number }}
  */
 export function checkFallbackError(status, errorText, backoffLevel = 0) {
   const lowerError = errorText
@@ -29,27 +29,42 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
     // Text-based rule: match substring in error message
     if (rule.text && lowerError && lowerError.includes(rule.text)) {
       if (rule.shouldFallback === false) {
-        return { shouldFallback: false, cooldownMs: 0, newBackoffLevel: backoffLevel };
+        return {
+          shouldFallback: false,
+          shouldModelFallback: rule.shouldModelFallback === true,
+          cooldownMs: 0,
+          newBackoffLevel: backoffLevel,
+        };
       }
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-        return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
+        return {
+          shouldFallback: true,
+          shouldModelFallback: true,
+          cooldownMs: getQuotaCooldown(newLevel),
+          newBackoffLevel: newLevel,
+        };
       }
-      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
+      return { shouldFallback: true, shouldModelFallback: true, cooldownMs: rule.cooldownMs };
     }
 
     // Status-based rule: match HTTP status code
     if (rule.status && rule.status === status) {
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-        return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
+        return {
+          shouldFallback: true,
+          shouldModelFallback: true,
+          cooldownMs: getQuotaCooldown(newLevel),
+          newBackoffLevel: newLevel,
+        };
       }
-      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
+      return { shouldFallback: true, shouldModelFallback: true, cooldownMs: rule.cooldownMs };
     }
   }
 
   // Default: transient cooldown for any unmatched error
-  return { shouldFallback: true, cooldownMs: TRANSIENT_COOLDOWN_MS };
+  return { shouldFallback: true, shouldModelFallback: true, cooldownMs: TRANSIENT_COOLDOWN_MS };
 }
 
 /**

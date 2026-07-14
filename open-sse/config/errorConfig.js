@@ -50,12 +50,13 @@ const COOLDOWN = {
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
- * Each rule: { text?, status?, cooldownMs?, backoff?, shouldFallback? }
+ * Each rule: { text?, status?, cooldownMs?, backoff?, shouldFallback?, shouldModelFallback? }
  *   - text: substring match (case-insensitive) on error message
  *   - status: HTTP status code match
  *   - cooldownMs: fixed cooldown duration
  *   - backoff: true = use exponential backoff (rate limit)
- *   - shouldFallback: false = return the request error without locking the account/model
+ *   - shouldFallback: false = do not retry another account or lock this account/model
+ *   - shouldModelFallback: true = a combo may still try its next model
  */
 export const ERROR_RULES = [
   // Client/request-shape errors must be returned to the caller, not interpreted
@@ -65,6 +66,10 @@ export const ERROR_RULES = [
   { text: "only supports text input",  shouldFallback: false },
   { text: "does not support image",    shouldFallback: false },
   { text: "unsupported image input",   shouldFallback: false },
+  { text: "image dimensions",          shouldFallback: false, shouldModelFallback: true },
+  { text: "unsupported image format",  shouldFallback: false, shouldModelFallback: true },
+  { text: "failed to decode image",    shouldFallback: false, shouldModelFallback: true },
+  { text: "invalid image",             shouldFallback: false, shouldModelFallback: true },
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },

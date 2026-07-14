@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
-import { getRotatedModels, resetComboRotation } from "../../open-sse/services/combo.js";
+import { getRotatedModels, handleComboChat, resetComboRotation } from "../../open-sse/services/combo.js";
 
 describe("combo round-robin routing", () => {
   beforeEach(() => {
@@ -54,5 +54,34 @@ describe("combo round-robin routing", () => {
 
     expect(getRotatedModels(models, "code-xhigh", "fallback", 2)).toEqual(models);
     expect(getRotatedModels(models, "code-xhigh", "fallback", 2)).toEqual(models);
+  });
+
+  it("tries the next model for image validation errors", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "vision/first") {
+        return new Response(JSON.stringify({
+          error: { message: "Image dimensions 1x1 are too small" },
+        }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const result = await handleComboChat({
+      body: { messages: [{ role: "user", content: "inspect image" }] },
+      models: ["vision/first", "vision/second"],
+      handleSingleModel,
+      log: { info: () => {}, warn: () => {} },
+      comboName: "vision-fallback-test",
+      comboStrategy: "fallback",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(handleSingleModel.mock.calls.map((call) => call[1])).toEqual([
+      "vision/first",
+      "vision/second",
+    ]);
   });
 });

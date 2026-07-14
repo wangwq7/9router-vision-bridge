@@ -1,3 +1,9 @@
+# v0.5.30-vision-bridge.5 (2026-07-14)
+
+## Fixes
+- **Fallback**: do not model-lock or retry vision accounts for deterministic image validation errors, while still allowing the combo to try its next vision model.
+- **CI**: publish maintenance images to the repository's own public GHCR package without upstream Docker Hub secrets.
+
 # v0.5.30-vision-bridge.4 (2026-07-14)
 
 ## Fixes
